@@ -1,2 +1,3 @@
-# QMS-Web
-Quality Management System for Thi Qar Oil Company
+git add .
+git commit -m "Resolve merge conflicts"
+git push -u origin main
