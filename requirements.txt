@@ -1,0 +1,6 @@
+streamlit==1.39.0
+PyGithub==2.3.0
+pandas
+openpyxl
+python-docx
+Pillow
