@@ -101,3 +101,17 @@ else:
     if password:
         st.error("❌ كلمة المرور غير صحيحة")
 
+# -------------------------------
+# التوقيع الرسمي أسفل التطبيق
+# -------------------------------
+st.markdown("---")  # خط فاصل بسيط
+st.markdown(
+    """
+    <div style='text-align:center; color:#444; font-family:"Amiri", serif; font-size:18px;'>
+        © تصميم وتطوير رئيس مهندسين أقدم <span style='color:#CBA135; font-weight:bold;'>طارق مجيد الكريمي</span>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
