@@ -13,18 +13,14 @@ from github import Github
 st.set_page_config(page_title="QMS Web — Thi Qar Oil Company", layout="wide")
 
 SECTIONS = {
-    "Quality Policy":        {"slug": "policies",   "pw_key": "PW_POLICIES"},
-    "Objectives":            {"slug": "objectives", "pw_key": "PW_OBJECTIVES"},
-    "Document Control":      {"slug": "docs",       "pw_key": "PW_DOCS"},
-    "Audit Plan":            {"slug": "audit",      "pw_key": "PW_AUDIT"},
-    "Audits":                {"slug": "audits",     "pw_key": "PW_AUDITS"},
-    "Non-Conformance":       {"slug": "nc",         "pw_key": "PW_NC"},
-    "CAPA":                  {"slug": "capa",       "pw_key": "PW_CAPA"},
-    "Knowledge Base":        {"slug": "kb",         "pw_key": "PW_KB"},
-    "Reports":               {"slug": "reports",    "pw_key": "PW_REPORTS"},
-    "Performance Eval (KPI)":{"slug": "kpi",        "pw_key": "PW_KPI"},
-    "E-Signature":           {"slug": "esign",      "pw_key": "PW_ESIGN"},
-    "Notifications":         {"slug": "notify",     "pw_key": "PW_NOTIFY"},
+    "Quality Policy": {"slug": "policies"},
+    "Objectives": {"slug": "objectives"},
+    "Document Control": {"slug": "documents"},
+    "Audit Plan": {"slug": "audit_plan"},
+    "Audits": {"slug": "audits"},
+    "Non-Conformance": {"slug": "non_conformance"},
+    "CAPA": {"slug": "capa"},
+    "Knowledge Base": {"slug": "knowledge"},
 }
 
 # -------------------------------
@@ -211,3 +207,4 @@ if st.session_state.get(f"unlocked_{info['slug']}", False):
 # تذييل
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.caption("© QMS Web — Thi Qar Oil Company — Designed by Chief Engineer Tareq Majeed Al-Karimi")
+
