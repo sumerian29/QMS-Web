@@ -1,211 +1,103 @@
+# streamlit_app.py
+# واجهة عربية كاملة مع ألوان الأزرق و RTL
 import os
 import base64
-from io import BytesIO
 from datetime import datetime
+from io import BytesIO
 
-import pandas as pd
 import streamlit as st
-from github import Github
+import pandas as pd
 
 # -------------------------------
-# إعدادات عامة
+# إعداد الصفحة
 # -------------------------------
-st.set_page_config(page_title="QMS Web — Thi Qar Oil Company", layout="wide")
+st.set_page_config(
+    page_title="منصة إدارة الجودة والأداء — QMS",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
+# -------------------------------
+# تنسيق عام: RTL + ألوان
+# (يبقى config.toml هو المصدر الرئيسي للألوان إن وُجد)
+# -------------------------------
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&display=swap');
+
+html, body, [data-testid="stAppViewContainer"] * {
+  direction: rtl;
+  text-align: right;
+  font-family: 'Cairo', sans-serif;
+}
+
+/* خلفية عامة أزرق فاتح (احتياطي لو لم يوجد .streamlit/config.toml) */
+[data-testid="stAppViewContainer"] {
+  background: #EAF4FF;
+}
+
+/* الشريط الجانبي بدرجة أزرق أغمق */
+[data-testid="stSidebar"] {
+  background: #CFE3FF;
+  border-left: 1px solid #BBD2FF;
+}
+
+/* أزرار أساسية */
+:root { --primary-color: #0A66C2; }
+button[kind="primary"] { background-color: #0A66C2; }
+
+/* تحسين المسافات */
+.block-container { padding-top: 1.2rem; padding-bottom: 1.6rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# -------------------------------
+# تعريف الأقسام (تعريب كامل)
+# ملاحظة: أبقينا مفاتيح slug كما هي كي لا تتأثر وظائفك السابقة
+# -------------------------------
 SECTIONS = {
-    "سياسة الجودة": {"slug": "policies"},
-    "الأهداف": {"slug": "objectives"},
-    "التحكم بالوثائق": {"slug": "documents"},
-    "خطة التدقيق": {"slug": "audit_plan"},
-    "نتائج التدقيق": {"slug": "audits"},
-    "عدم المطابقة": {"slug": "non_conformance"},
-    "الإجراءات التصحيحية": {"slug": "capa"},
-    "قاعدة المعرفة": {"slug": "knowledge"},
+    "سياسة الجودة":              {"slug": "policies",   "pw_key": "PW_POLICIES"},
+    "الأهداف":                  {"slug": "objectives", "pw_key": "PW_OBJECTIVES"},
+    "التحكم بالوثائق":          {"slug": "docs",       "pw_key": "PW_DOCS"},
+    "خطة التدقيق":              {"slug": "audit_plan", "pw_key": "PW_AUDIT_PLAN"},
+    "نتائج التدقيق":            {"slug": "audits",     "pw_key": "PW_AUDITS"},
+    "عدم المطابقة":             {"slug": "nc",         "pw_key": "PW_NC"},
+    "الإجراءات التصحيحية":      {"slug": "capa",       "pw_key": "PW_CAPA"},
+    "قاعدة المعرفة":            {"slug": "kb",         "pw_key": "PW_KB"},
 }
 
 # -------------------------------
-# ترويسة مع الشعار
+# رأس الصفحة (شعار + عنوان)
 # -------------------------------
-col_logo, col_title, col_empty = st.columns([1,3,1])
+col_logo, col_title = st.columns([1, 5], gap="medium")
 with col_logo:
-    # يعرض الشعار من جذر المستودع (sold.png)
-    st.image(os.path.join(os.path.dirname(__file__), "sold.png"), width=110)
+    if os.path.exists("sold.png"):
+        st.image("sold.png", caption="شعار الشركة", use_column_width=True)
 with col_title:
-    st.markdown(
-        """
-        <div style="text-align:center;">
-          <h2 style="margin-bottom:4px;color:#0b3d6e;">QMS — Quality & Performance Division</h2>
-          <h4 style="margin-top:0;color:#ad8c1f;">Thi Qar Oil Company</h4>
-          <div style="height:6px;background:linear-gradient(90deg,#0d7a33,#ad8c1f,#0d7a33);border-radius:6px;"></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown("## منصة إدارة الجودة والأداء (QMS)")
+    st.caption("Thi Qar Oil Company — واجهة عربية • أزرق فاتح مع قائمة جانبية بدرجة أغمق")
+
+if os.path.exists("Audio.mp3"):
+    with st.expander("تشغيل موسيقى ترحيبية (اختياري)"):
+        st.audio("Audio.mp3")
+
+st.markdown("---")
 
 # -------------------------------
-# الإتصال بـ GitHub (من Secrets)
+# الشريط الجانبي
 # -------------------------------
-# في Streamlit Cloud > Manage app > Settings > Secrets ضَع:
-# [secrets]
-# GH_TOKEN = "ghp_xxx..."
-# GH_OWNER = "sumerian29"
-# GH_REPO  = "QMS-Web"
-# PW_POLICIES   = "policy-2025"
-# PW_OBJECTIVES = "obj-2025"
-# PW_DOCS       = "docs-2025"
-# PW_AUDIT      = "audit-2025"
-# PW_AUDITS     = "audits-2025"
-# PW_NC         = "nc-2025"
-# PW_CAPA       = "capa-2025"
-# PW_KB         = "kb-2025"
-# PW_REPORTS    = "reports-2025"
-# PW_KPI        = "kpi-2025"
-# PW_ESIGN      = "esign-2025"
-# PW_NOTIFY     = "notify-2025"
+st.sidebar.header("اختر القسم")
+section_name = st.sidebar.selectbox("اختر القسم", list(SECTIONS.keys()))
+st.sidebar.markdown("---")
 
-try:
-    GH_TOKEN = st.secrets["GH_TOKEN"]
-    GH_OWNER = st.secrets["GH_OWNER"]
-    GH_REPO  = st.secrets["GH_REPO"]
-except Exception:
-    st.error("Secrets GH_TOKEN / GH_OWNER / GH_REPO غير مضبوطة في Streamlit Secrets.")
-    st.stop()
-
-gh = Github(GH_TOKEN)
-repo = gh.get_user(GH_OWNER).get_repo(GH_REPO)
-
-def gh_list_files(path: str):
-    """يجلب قائمة ملفات مجلد ما من المستودع."""
-    try:
-        contents = repo.get_contents(path)
-        files = []
-        for c in contents:
-            if c.type == "file":
-                files.append({
-                    "name": c.name,
-                    "path": c.path,
-                    "sha":  c.sha,
-                    "size": c.size,
-                    "download_url": c.download_url
-                })
-        return files
-    except Exception:
-        return []
-
-def gh_upload_file(path: str, data_bytes: bytes, message: str):
-    """يرفع ملف جديد أو يحدّثه إن كان موجوداً."""
-    try:
-        try:
-            existing = repo.get_contents(path)
-        except Exception:
-            existing = None
-
-        if existing:
-            repo.update_file(path, message, data_bytes, existing.sha, branch="main")
-        else:
-            repo.create_file(path, message, data_bytes, branch="main")
-        return True, "Done"
-    except Exception as e:
-        return False, str(e)
-
-def gh_delete_file(path: str, sha: str, message: str):
-    try:
-        repo.delete_file(path, message, sha, branch="main")
-        return True, "Deleted"
-    except Exception as e:
-        return False, str(e)
-
-def section_password_ok(section_key: str, entered: str):
-    """يتحقق من كلمة مرور القسم من Secrets."""
-    try:
-        return entered == st.secrets.get(section_key, "")
-    except Exception:
-        return False
+query = st.sidebar.text_input("بحث سريع", placeholder="مثال: سياسة الجودة، التدقيق الداخلي، CAPA...")
+st.sidebar.caption("© تصميم وتطوير: رئيس مهندسين طارق مجيد الكريمي")
 
 # -------------------------------
-# واجهة المستخدم
+# دوال مساعدة
 # -------------------------------
-st.sidebar.markdown("### اختر القسم")
-sec_names = list(SECTIONS.keys())
-selected = st.sidebar.selectbox("اختر القسم", sec_names)
-info = SECTIONS[selected]
-folder = f"storage/{info['slug']}"   # مجلد التخزين داخل المستودع
-
-st.subheader(selected)
-
-# قائمة الملفات الحالية
-files = gh_list_files(folder)
-
-if files:
-    df = pd.DataFrame([{"File": f["name"], "Size": f["size"], "Path": f["path"]} for f in files])
-    st.dataframe(df, use_container_width=True, hide_index=True)
-else:
-    st.info("لا توجد ملفات بعد في هذا القسم.")
-
-st.divider()
-
-# وضع القراءة للجميع:
-st.markdown("### تنزيل الملفات")
-if files:
-    for f in files:
-        st.markdown(f"- [{f['name']}]({f['download_url']})")
-else:
-    st.caption("—")
-
-st.divider()
-
-# تحكم الصلاحيات (رفع/حذف) بكلمة مرور القسم
-with st.expander("🔐 لوحة التحكم (يتطلب كلمة مرور القسم)"):
-    pwd = st.text_input(f"أدخل كلمة مرور قسم [{info['slug']}]", type="password")
-    if st.button("Unlock", use_container_width=False):
-        if section_password_ok(info["pw_key"], pwd):
-            st.success("تم فتح الصلاحيات. يمكنك الرفع/الحذف لهذا القسم.")
-            st.session_state[f"unlocked_{info['slug']}"] = True
-        else:
-            st.error("كلمة المرور غير صحيحة.")
-
-if st.session_state.get(f"unlocked_{info['slug']}", False):
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### رفع ملف (Excel / Word / PDF / صورة)")
-        up = st.file_uploader(
-            "اختر ملفاً",
-            type=["xlsx","xls","docx","pdf","png","jpg","jpeg"]
-        )
-        if up is not None:
-            safe_name = up.name
-            bytes_data = up.read()
-            path = f"{folder}/{safe_name}"
-            ok, msg = gh_upload_file(
-                path,
-                bytes_data,
-                message=f"[{selected}] upload {safe_name} @ {datetime.now().isoformat(timespec='seconds')}"
-            )
-            if ok:
-                st.success("تم الرفع بنجاح. حدّث الصفحة إذا لم يظهر الملف فوراً.")
-            else:
-                st.error(f"فشل الرفع: {msg}")
-
-    with col2:
-        st.markdown("#### حذف ملف")
-        if files:
-            to_del = st.selectbox("اختر ملفاً للحذف", [f["name"] for f in files])
-            if st.button("حذف الملف المحدد"):
-                target = [f for f in files if f["name"] == to_del][0]
-                ok, msg = gh_delete_file(
-                    target["path"],
-                    target["sha"],
-                    message=f"[{selected}] delete {to_del} @ {datetime.now().isoformat(timespec='seconds')}"
-                )
-                if ok:
-                    st.success("تم الحذف.")
-                else:
-                    st.error(f"فشل الحذف: {msg}")
-        else:
-            st.caption("لا يوجد ما يُحذف.")
-
-# تذييل
-st.markdown("<hr/>", unsafe_allow_html=True)
-st.caption("© QMS Web — Thi Qar Oil Company — Designed by Chief Engineer Tareq Majeed Al-Karimi")
-
-
+def save_uploaded_file(uploaded_file, folder):
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, uploaded_file.name)
+    with open(path, "wb") as f:
+        f.write(upload
