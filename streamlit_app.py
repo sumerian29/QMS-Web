@@ -1,103 +1,103 @@
-# streamlit_app.py
-# واجهة عربية كاملة مع ألوان الأزرق و RTL
+import streamlit as st
 import os
-import base64
-from datetime import datetime
+from github import Github
 from io import BytesIO
 
-import streamlit as st
-import pandas as pd
+# ==============================
+# إعدادات الصفحة العامة
+# ==============================
+st.set_page_config(page_title="QMS — Thi Qar Oil Company", layout="wide")
 
-# -------------------------------
-# إعداد الصفحة
-# -------------------------------
-st.set_page_config(
-    page_title="منصة إدارة الجودة والأداء — QMS",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# -------------------------------
-# تنسيق عام: RTL + ألوان
-# (يبقى config.toml هو المصدر الرئيسي للألوان إن وُجد)
-# -------------------------------
+# ==============================
+# تنسيق الواجهة (الألوان والخطوط)
+# ==============================
 st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&display=swap');
-
-html, body, [data-testid="stAppViewContainer"] * {
-  direction: rtl;
-  text-align: right;
-  font-family: 'Cairo', sans-serif;
-}
-
-/* خلفية عامة أزرق فاتح (احتياطي لو لم يوجد .streamlit/config.toml) */
-[data-testid="stAppViewContainer"] {
-  background: #EAF4FF;
-}
-
-/* الشريط الجانبي بدرجة أزرق أغمق */
-[data-testid="stSidebar"] {
-  background: #CFE3FF;
-  border-left: 1px solid #BBD2FF;
-}
-
-/* أزرار أساسية */
-:root { --primary-color: #0A66C2; }
-button[kind="primary"] { background-color: #0A66C2; }
-
-/* تحسين المسافات */
-.block-container { padding-top: 1.2rem; padding-bottom: 1.6rem; }
-</style>
+    <style>
+        body {
+            direction: rtl;
+            font-family: 'Amiri', serif;
+        }
+        .title {
+            text-align: center;
+            color: #003366;
+            font-size: 40px;
+            font-weight: bold;
+        }
+        .subtitle {
+            text-align: center;
+            color: #CBA135;
+            font-size: 22px;
+            font-family: 'Amiri', serif;
+        }
+        .stSelectbox label {
+            font-weight: bold;
+            color: #003366;
+        }
+        .upload-label {
+            font-weight: bold;
+            color: #005588;
+        }
+    </style>
 """, unsafe_allow_html=True)
 
-# -------------------------------
-# تعريف الأقسام (تعريب كامل)
-# ملاحظة: أبقينا مفاتيح slug كما هي كي لا تتأثر وظائفك السابقة
-# -------------------------------
-SECTIONS = {
-    "سياسة الجودة":              {"slug": "policies",   "pw_key": "PW_POLICIES"},
-    "الأهداف":                  {"slug": "objectives", "pw_key": "PW_OBJECTIVES"},
-    "التحكم بالوثائق":          {"slug": "docs",       "pw_key": "PW_DOCS"},
-    "خطة التدقيق":              {"slug": "audit_plan", "pw_key": "PW_AUDIT_PLAN"},
-    "نتائج التدقيق":            {"slug": "audits",     "pw_key": "PW_AUDITS"},
-    "عدم المطابقة":             {"slug": "nc",         "pw_key": "PW_NC"},
-    "الإجراءات التصحيحية":      {"slug": "capa",       "pw_key": "PW_CAPA"},
-    "قاعدة المعرفة":            {"slug": "kb",         "pw_key": "PW_KB"},
+# ==============================
+# عنوان الصفحة والشعار
+# ==============================
+st.image("sold.png", width=160)
+st.markdown("<div class='title'>QMS — Quality & Performance Division</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Thi Qar Oil Company</div>", unsafe_allow_html=True)
+st.divider()
+
+# ==============================
+# قائمة الأقسام
+# ==============================
+sections = {
+    "Quality Policy": "سياسة الجودة",
+    "Objectives": "الأهداف",
+    "Document Control": "ضبط الوثائق",
+    "Audit Plan": "خطة التدقيق",
+    "Audits": "نتائج التدقيق",
+    "Non-Conformance": "عدم المطابقة",
+    "CAPA": "الإجراءات التصحيحية والوقائية",
+    "Knowledge Base": "قاعدة المعرفة"
 }
 
-# -------------------------------
-# رأس الصفحة (شعار + عنوان)
-# -------------------------------
-col_logo, col_title = st.columns([1, 5], gap="medium")
-with col_logo:
-    if os.path.exists("sold.png"):
-        st.image("sold.png", caption="شعار الشركة", use_column_width=True)
-with col_title:
-    st.markdown("## منصة إدارة الجودة والأداء (QMS)")
-    st.caption("Thi Qar Oil Company — واجهة عربية • أزرق فاتح مع قائمة جانبية بدرجة أغمق")
+selected_section = st.sidebar.selectbox("اختر القسم", list(sections.keys()), format_func=lambda x: sections[x])
 
-if os.path.exists("Audio.mp3"):
-    with st.expander("تشغيل موسيقى ترحيبية (اختياري)"):
-        st.audio("Audio.mp3")
-
-st.markdown("---")
-
-# -------------------------------
-# الشريط الجانبي
-# -------------------------------
-st.sidebar.header("اختر القسم")
-section_name = st.sidebar.selectbox("اختر القسم", list(SECTIONS.keys()))
-st.sidebar.markdown("---")
-
-query = st.sidebar.text_input("بحث سريع", placeholder="مثال: سياسة الجودة، التدقيق الداخلي، CAPA...")
-st.sidebar.caption("© تصميم وتطوير: رئيس مهندسين طارق مجيد الكريمي")
-
-# -------------------------------
-# دوال مساعدة
-# -------------------------------
+# ==============================
+# تحميل الملفات وحفظها
+# ==============================
 def save_uploaded_file(uploaded_file, folder):
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, uploaded_file.name)
     with open(path, "wb") as f:
-        f.write(upload
+        f.write(uploaded_file.getbuffer())
+    return path
+
+# ==============================
+# الواجهة الرئيسية لكل قسم
+# ==============================
+st.header(sections[selected_section])
+
+uploaded_file = st.file_uploader(f"ارفع ملف {sections[selected_section]}", type=["pdf", "docx", "xlsx"])
+
+if uploaded_file and st.button("رفع الملف", type="primary"):
+    path = save_uploaded_file(uploaded_file, f"uploads/{selected_section}")
+    st.success(f"✅ تم رفع الملف بنجاح: **{uploaded_file.name}**")
+    st.info(f"📂 تم حفظه في: `{path}`")
+
+# ==============================
+# منطقة التحكم المحمية
+# ==============================
+st.divider()
+st.subheader("🔒 لوحة التحكم (تتطلب كلمة مرور القسم)")
+
+password = st.text_input("أدخل كلمة المرور", type="password")
+
+if password == "QMS@ThiQar":
+    st.success("تم تسجيل الدخول بنجاح ✅")
+    st.write("يمكنك الآن إدارة الملفات والمجلدات الخاصة بالقسم.")
+else:
+    if password:
+        st.error("❌ كلمة المرور غير صحيحة")
+
