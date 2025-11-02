@@ -13,14 +13,14 @@ from github import Github
 st.set_page_config(page_title="QMS Web — Thi Qar Oil Company", layout="wide")
 
 SECTIONS = {
-    "Quality Policy": {"slug": "policies"},
-    "Objectives": {"slug": "objectives"},
-    "Document Control": {"slug": "documents"},
-    "Audit Plan": {"slug": "audit_plan"},
-    "Audits": {"slug": "audits"},
-    "Non-Conformance": {"slug": "non_conformance"},
-    "CAPA": {"slug": "capa"},
-    "Knowledge Base": {"slug": "knowledge"},
+    "سياسة الجودة": {"slug": "policies"},
+    "الأهداف": {"slug": "objectives"},
+    "التحكم بالوثائق": {"slug": "documents"},
+    "خطة التدقيق": {"slug": "audit_plan"},
+    "نتائج التدقيق": {"slug": "audits"},
+    "عدم المطابقة": {"slug": "non_conformance"},
+    "الإجراءات التصحيحية": {"slug": "capa"},
+    "قاعدة المعرفة": {"slug": "knowledge"},
 }
 
 # -------------------------------
@@ -207,4 +207,5 @@ if st.session_state.get(f"unlocked_{info['slug']}", False):
 # تذييل
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.caption("© QMS Web — Thi Qar Oil Company — Designed by Chief Engineer Tareq Majeed Al-Karimi")
+
 
