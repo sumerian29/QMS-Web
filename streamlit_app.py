@@ -219,44 +219,139 @@ if entered_pw:
         st.error("كلمة المرور غير صحيحة. يرجى التحقق من قائمة كلمات المرور.")
 
 # ===============================[ تذييل ]=============================
-st.markdown('''
-<div style="
-    background-color: #ffffff;
-    border-radius: 16px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.07);
-    padding: 35px 45px;
-    max-width: 950px;
-    margin: 30px auto;
-    direction: rtl;
-    text-align: justify;
-    line-height: 2.1;
-    font-size: 18px;
-    color: #1e272e;
-    font-weight: 500;
-">
+# ====== 1) CSS لضبط الفراغات ومنع قص الشعارات والتداخل ======
+st.markdown("""
+<style>
+/* حواف عامة مريحة */
+.block-container { padding-top: 1.4rem !important; }
 
-    <p style="
-        text-align: center;
-        color: #b8860b;
-        font-size: 24px;
-        font-weight: 900;
-        margin-bottom: 16px;
-        border-bottom: 2px solid #b8860b;
-        display: inline-block;
-        padding-bottom: 6px;
-    ">
-        إنجاز وطني لشركة نفط ذي قار
-    </p>
+/* منع أي قصّ لعناصر الهيدر */
+.hero-wrap { 
+  max-width: 1100px; 
+  margin: 0 auto 8px auto; 
+  padding: 8px 10px; 
+}
 
-    <p style="margin-top: 25px; text-align: justify;">
-        يُعَد حصول <strong>شركة نفط ذي قار</strong> على
-        <strong>شهادة الاعتماد الدولي 
-        <span dir="ltr" style="display:inline-block; color:#b8860b;">ISO&nbsp;9001:2015</span></strong>
-        من مؤسسة <strong>Bureau Veritas</strong> البريطانية إنجازًا وطنيًا واستراتيجيًا،
-        تحقق بفضل الجهود الكبيرة لشعبة <strong>الجودة وتقويم الأداء المؤسسي</strong> في ترسيخ
-        أنظمة الإدارة المتكاملة وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة،
-        دعمًا لمسيرتها نحو التميز والشفافية والالتزام بأعلى المعايير العالمية.
-    </p>
+/* صف الأعمدة: شعار + عناوين */
+.hero-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 16px;
+  align-items: center;
+}
 
+/* الشعار: بدون قصّ وبقياس ثابت */
+.toc-logo {
+  width: 120px; 
+  height: auto; 
+  object-fit: contain; 
+  display: block;
+}
+
+/* العناوين الإنكليزية */
+.ims-title {
+  font-size: 44px;
+  line-height: 1.15;
+  font-weight: 800;
+  color: #0a3d62;
+  margin: 0;
+  text-align: center;
+}
+
+/* عنوان الشركة بالعربية */
+.co-ar {
+  font-size: 34px;
+  font-weight: 800;
+  color: #b8860b;
+  text-align: center;
+  margin: 6px 0 0 0;
+}
+
+/* شعبة الجودة بالعربية – بدون أيقونة رابط (لا نستخدم st.header) */
+.div-ar {
+  font-size: 22px;
+  font-weight: 700;
+  color: #233142;
+  text-align: center;
+  margin: 2px 0 10px 0;
+}
+
+/* صندوق الفقرة العربية تحت الشريط الذهبي */
+.ar-card {
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  padding: 22px 26px;
+  max-width: 980px;
+  margin: 14px auto 18px auto;
+  direction: rtl;
+  text-align: justify;
+  line-height: 2.0;
+  font-size: 18px;
+  color: #1c2833;
+  font-weight: 500;
+}
+
+/* عنوان الفقرة الذهبي */
+.ar-card .title {
+  text-align: center;
+  color: #b8860b;
+  font-size: 22px;
+  font-weight: 900;
+  margin: 0 0 10px 0;
+  display: inline-block;
+  border-bottom: 2px solid #b8860b;
+  padding-bottom: 4px;
+}
+
+/* إبراز المصطلحات الأجنبية داخل العربية وتفادي انقلاب ترتيبها */
+.ltr-chip {
+  direction: ltr;
+  display: inline-block;
+  white-space: nowrap;
+  font-weight: 800;
+}
+.ltr-chip.gold { color: #b8860b; }
+
+/* مسافة صغيرة أسفل الشريط الذهبي */
+.badge-gap { height: 6px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ====== 2) ترويسة: شعار + IMS + عناوين عربية بدون قصّ ======
+st.markdown("""
+<div class="hero-wrap">
+  <div class="hero-row">
+    <div>
+      <img class="toc-logo" src="https://raw.githubusercontent.com/sumerian29/QMS-Web/main/sold.png" alt="Thi Qar Oil Company">
+    </div>
+    <div>
+      <h1 class="ims-title">IMS — Integrated Management System</h1>
+      <div class="co-ar">شركة نفط ذي قار</div>
+      <div class="div-ar">شعبة الجودة وتقويم الأداء المؤسسي</div>
+    </div>
+  </div>
 </div>
-''', unsafe_allow_html=True)
+""", unsafe_allow_html=True)
+
+# (أبْقِ الشريط الذهبي كما هو عندك… ثم ضع الفقرة العربية التالية بعده مباشرة)
+
+# ====== 3) فقرة الإنجاز العربية (منع تداخل العربية/الإنكليزية وضبط الاصطفاف) ======
+st.markdown("""
+<div class="badge-gap"></div>
+
+<div class="ar-card">
+  <div class="title">إنجاز وطني لشركة نفط ذي قار</div>
+  <p>
+    يُعَد حصول <strong>شركة نفط ذي قار</strong> على
+    <span class="ltr-chip gold">ISO&nbsp;9001:2015</span>
+    من مؤسسة <span class="ltr-chip">Bureau&nbsp;Veritas</span> البريطانية
+    إنجازًا وطنيًا واستراتيجيًا، تحقق بفضل الجهود الكبيرة لشعبة
+    <strong>الجودة وتقويم الأداء المؤسسي</strong> في ترسيخ أنظمة الإدارة المتكاملة
+    وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة،
+    دعمًا لمسيرتها نحو التميز والشفافية والالتزام بأعلى المعايير العالمية.
+  </p>
+</div>
+""", unsafe_allow_html=True)
+
+
