@@ -1,209 +1,206 @@
-# -*- coding: utf-8 -*-
+# ---------------------------------------------------------------
 # IMS — Integrated Management System (Arabic UI)
 # Thi Qar Oil Company — Quality & Institutional Performance Division
 # Designed & Developed by Chief Engineer Tareq Majeed Al-Karimi
+# ---------------------------------------------------------------
 
 import os
-import io
-import base64
 from datetime import datetime
+from io import BytesIO
+import base64
+
 import streamlit as st
 
-# -------------------------------[ إعدادات عامة ]-------------------------------
+# ------------------------------[ إعداد عام ]------------------------------
 st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
 
-# مسار الحفظ الجذري للملفات
-DATA_ROOT = os.path.join(os.getcwd(), "data")
-os.makedirs(DATA_ROOT, exist_ok=True)
-
+# ثابتات الحجم والأنواع
 MAX_MB = 200
 MAX_BYTES = MAX_MB * 1024 * 1024
 ACCEPT = ["pdf", "docx", "xlsx", "pptx"]
 
-# ----------------------[ خريطة الأقسام عربي ⇄ إنجليزي ]-----------------------
-SECTIONS_AR2EN = {
-    "سياسة الجودة":               "quality-policy",
-    "الأهداف":                   "objectives",
-    "ضبط الوثائق":               "document-control",
-    "خطة التدقيق":               "audit-plan",
-    "نتائج التدقيق":             "audits",
-    "عدم المطابقة":              "non-conformance",
-    "الإجراءات التصحيحية والوقائية (CAPA)": "capa",
-    "قاعدة المعرفة":             "knowledge-base",
-    "التقارير":                  "reports",
-    "مؤشرات الأداء (KPI)":       "kpi",
-    "التوقيع الإلكتروني":        "e-sign",
-    "الإشعارات":                 "notify",
-    "المخاطر":                   "risks",           # جديد
-}
-SECTIONS_AR = list(SECTIONS_AR2EN.keys())
+# مجلد تخزين محلي لكل قسم
+BASE_DIR = "data"
+os.makedirs(BASE_DIR, exist_ok=True)
 
-# ---------------------------[ كلمات المرور للأقسام ]---------------------------
-# التزم بالصيَغ التي زوّدتني بها (+ قسم المخاطر):
-PASSWORDS = {
-    "quality-policy":  "policy-2025",
-    "objectives":      "obj-2025",
-    "document-control":"docs-2025",
-    "audit-plan":      "audit-2025",
-    "audits":          "audits-2025",
-    "non-conformance": "nc-2025",
-    "capa":            "capa-2025",
-    "knowledge-base":  "kb-2025",
-    "reports":         "reports-2025",
-    "kpi":             "kpi-2025",
-    "e-sign":          "esign-2025",
-    "notify":          "notify-2025",
-    "risks":           "risks-2025",
-}
-
-# -------------------------[ أدوات مساعدة ـ Utilities ]-------------------------
-def normalize_pw(s: str) -> str:
-    """تطبيع كلمة السر: إزالة محارف الاتجاه/المسافات وتوحيد الشرطة وتحويل الأرقام العربية إلى إنجليزية"""
-    if not s:
-        return ""
-    s = s.strip()
-    # إزالة محارف الاتجاه الشائعة
-    for mark in ["\u200f", "\u200e", "\u202a", "\u202b", "\u2067", "\u2066"]:
-        s = s.replace(mark, "")
-    # توحيد الشرطة
-    s = s.replace("–", "-").replace("—", "-").replace("ـ", "-")
-    # تحويل الأرقام العربية إلى إنجليزية
-    arabic_digits = "٠١٢٣٤٥٦٧٨٩"
-    for i, d in enumerate(arabic_digits):
-        s = s.replace(d, str(i))
-    return s
-
-def ensure_section_dir(slug: str) -> str:
-    path = os.path.join(DATA_ROOT, slug)
-    os.makedirs(path, exist_ok=True)
-    return path
-
-def human_size(n: int) -> str:
-    for unit in ["B", "KB", "MB", "GB"]:
-        if n < 1024.0:
-            return f"{n:.1f} {unit}"
-        n /= 1024.0
-    return f"{n:.1f} TB"
-
-def list_files(slug: str):
-    folder = ensure_section_dir(slug)
-    files = []
-    for name in sorted(os.listdir(folder)):
-        fpath = os.path.join(folder, name)
-        if os.path.isfile(fpath):
-            files.append((name, os.path.getsize(fpath), fpath))
-    return files
-
-def file_download_link(name: str, fpath: str) -> str:
-    # إنشاء رابط تنزيل (Data URI) لتجنّب المعاينة وفتح نافذة الحفظ مباشرة
-    with open(fpath, "rb") as f:
-        data = f.read()
-    b64 = base64.b64encode(data).decode()
-    ext = name.split(".")[-1].lower()
-    mime = {
-        "pdf":  "application/pdf",
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    }.get(ext, "application/octet-stream")
-    href = f'<a href="data:{mime};base64,{b64}" download="{name}">⬇️ تنزيل</a>'
-    return href
-
-# -------------------------------[ تنسيق CSS ]-----------------------------------
+# ---------------------------[ تنسيقات CSS ]---------------------------
 st.markdown("""
 <style>
-  body, .stApp {background-color:#f5f7fb;}
-  .ezrtsby0 {direction: rtl;}
-  .block-container {padding-top: 2.2rem; padding-bottom: 2rem;}
-  header {background: transparent;}
-  /* عناوين الواجهة */
-  .ims-title {font-size: 42px; font-weight: 800; color:#0e3a5d; text-align:center; line-height:1.25;}
-  .ims-sub {font-size: 22px; font-weight: 700; color:#c58f06; text-align:center; margin-top: 14px;}
-  .ims-dept {font-size: 20px; font-weight: 700; color:#112e51; text-align:center; margin: 4px 0 22px 0;}
-  /* الشريط الذهبي */
-  .ribbon {background: linear-gradient(90deg,#c79a0a,#a07100); color:#102235; 
-           border-radius:14px; padding: 16px 22px; text-align:center; font-weight:800;}
-  .badge-sub {display:block; font-weight:600; margin-top:6px;}
-  /* بطاقة الإنجاز الوطني */
-  .card {
-    background:#ffffff; border:1px solid #e8edf3; border-radius:14px; 
-    padding:18px 22px; box-shadow: 0 4px 10px rgba(16,35,53,0.06);
-    margin-top:16px;
-  }
-  .card h4 {text-align:center; color:#b38307; font-weight:800; margin: 0 0 8px 0;}
-  .card h4 span {border-bottom:3px solid #d5b15a; padding-bottom:3px;}
-  .card p {margin:0; line-height:1.9; font-size:17px; color:#1c2e3a;}
-  .card b {font-weight:800;}
-  .gold {color:#b38307; font-weight:800;}
-  /* رؤوس الأقسام */
-  .sec-title {font-size:22px; font-weight:800; color:#102235; margin:14px 0 8px 0;}
-  .hint {background:#e9f2ff; color:#1a3a5d; padding:10px 14px; border-radius:10px; font-size:14px;}
-  .footer {text-align:center; margin-top:28px; color:#2d3a45;}
-  .sig {color:#c58f06; font-weight:800;}
+  :root { --brand:#0a3d62; --gold:#c9a227; --gold2:#9f7d12; }
+  .stApp { background: #eef4fb; }
+  /* رأس */
+  .hero { text-align:center; padding: 12px 0 4px 0; }
+  .hero h1 { color:#0a3d62; font-size: 46px; line-height:1.2; margin: 0 0 4px; font-weight:800; }
+  .hero h2 { color:#c09200; font-size: 38px; margin: 6px 0 0 0; font-weight:800; }
+  .hero h3 { color:#0a3d62; font-size: 22px; margin-top: 6px; font-weight:800; letter-spacing:.2px; }
+  .subnote { text-align:center; font-size:13px; color:#2d3436; margin-top:4px }
+  /* شريط الشهادة */
+  .iso-banner { background: linear-gradient(90deg, var(--gold), var(--gold2));
+                color:#0b1320; border-radius: 14px; padding: 14px 18px; 
+                font-weight:800; text-align:center; margin: 10px 0 14px 0; }
+  .iso-sub { font-size:14px; color:#0b1320; margin-top:4px; }
+  /* بطاقة الإنجاز */
+  .award { background:#fff; border-radius:14px; padding:18px 22px; 
+           border: 1px solid #e6e6e6; box-shadow:0 2px 10px rgba(0,0,0,.04); }
+  .award h4 { color:#c09200; text-align:center; margin:0 0 8px 0; 
+              font-weight:800; font-size:22px; border-bottom:2px solid #e6d18f;
+              display:inline-block; padding:0 10px 6px; }
+  .award p { margin:10px 0 0 0; line-height:2.0; font-size:15.8px; color:#222; text-align:justify; }
+  .award .em { font-weight:800; }
+  .sec-title { font-size:22px; font-weight:800; color:#14213d; margin: 8px 0 10px; }
+  .hint { background:#eef5ff; border:1px dashed #9bb9ff; padding:10px 12px; 
+          border-radius:10px; color:#0b2b66; font-size:13px; }
+  .files-box { background:#f8fbff; border:1px solid #eef1f5; border-radius:12px; padding:10px 14px; }
+  .file-row { display:flex; align-items:center; justify-content:space-between; 
+              padding:6px 8px; border-bottom:1px dashed #e5ecf7; }
+  .file-row:last-child { border-bottom:none; }
+  .file-name { font-size:14.5px; color:#0b2b66; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .footer { text-align:center; font-size:13px; color:#444; margin-top:26px; }
+  .sig { color:#b7791f; font-weight:800; }
+  /* تصغير شعار الشركة عند الرأس */
+  .toc-logo { width: 120px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ------------------------------[ رأس الصفحة ]-----------------------------------
-col_logo, col_title, _ = st.columns([1,3,1], vertical_alignment="center")
-with col_logo:
-    # ضع شعار الشركة في مجلد العمل باسم sold.png إن رغبت
-    if os.path.exists("sold.png"):
-        st.image("sold.png", width=120)
-with col_title:
-    st.markdown('<div class="ims-title">IMS — Integrated Management System</div>', unsafe_allow_html=True)
-    st.markdown('<div class="ims-sub">شركة نفط ذي قار</div>', unsafe_allow_html=True)
-    st.markdown('<div class="ims-dept">شعبة الجودة وتقويم الأداء المؤسسي</div>', unsafe_allow_html=True)
+# -------------------------[ أدوات مساعدة ]-------------------------
+def normalize_pw(s: str) -> str:
+    """تطبيع كلمة المرور: إزالة الفراغات وتحويل الأرقام العربية إلى إنجليزية وخفض الحروف."""
+    if not s:
+        return ""
+    s = s.strip()
+    # أرقام عربية -> إنجليزية
+    trans = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+    s = s.translate(trans)
+    return s.lower()
 
-# شريط اعتماد الأيزو
-st.markdown(
-    '<div class="ribbon">CERTIFIED ISO 9001:2015 — Bureau Veritas'
-    '<span class="badge-sub">Quality Management System — UKAS Accredited</span></div>',
-    unsafe_allow_html=True
-)
+def section_dir_for(slug: str) -> str:
+    d = os.path.join(BASE_DIR, slug)
+    os.makedirs(d, exist_ok=True)
+    return d
 
-# بطاقة الإنجاز الوطني (المتنصف)
+def files_of(slug: str):
+    d = section_dir_for(slug)
+    files = []
+    for name in os.listdir(d):
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            files.append((name, os.path.getmtime(p), p))
+    # ترتيب الأحدث أولاً
+    files.sort(key=lambda t: t[1], reverse=True)
+    return files
+
+def download_link(label: str, path: str, key: str):
+    with open(path, "rb") as f:
+        data = f.read()
+    st.download_button(
+        label=label,
+        data=data,
+        file_name=os.path.basename(path),
+        mime="application/octet-stream",
+        key=key,
+        use_container_width=False
+    )
+
+# ---------------------------[ الأقسام ]---------------------------
+SECTIONS_AR2EN = {
+    "سياسة الجودة": "quality-policy",
+    "الأهداف": "objectives",
+    "ضبط الوثائق": "document-control",
+    "خطة التدقيق": "audit-plan",
+    "نتائج التدقيق": "audits",
+    "عدم المطابقة": "non-conformance",
+    "الإجراءات التصحيحية والوقائية (CAPA)": "capa",
+    "قاعدة المعرفة": "knowledge-base",
+    "التقارير": "reports",
+    "مؤشرات الأداء (KPI)": "kpi",
+    "التوقيع الإلكتروني": "e-sign",
+    "الإشعارات": "notify",
+    "المخاطر": "risks",  # جديد
+}
+SECTIONS_AR = list(SECTIONS_AR2EN.keys())
+
+# ربط أسماء الأسرار مع الأقسام
+SECT2SECRET = {
+    "quality-policy": "PW_POLICIES",
+    "objectives": "PW_OBJECTIVES",
+    "document-control": "PW_DOCS",
+    "audit-plan": "PW_AUDIT",
+    "audits": "PW_AUDITS",
+    "non-conformance": "PW_NC",
+    "capa": "PW_CAPA",
+    "knowledge-base": "PW_KB",
+    "reports": "PW_REPORTS",
+    "kpi": "PW_KPI",
+    "e-sign": "PW_ESIGN",
+    "notify": "PW_NOTIFY",
+    "risks": "PW_RISKS",
+}
+
+# قراءة كلمات المرور من Secrets
+PASSWORDS = {}
+for slug, secret_name in SECT2SECRET.items():
+    PASSWORDS[slug] = normalize_pw(st.secrets.get(secret_name, ""))
+
+# ---------------------------[ رأس الصفحة ]---------------------------
+logo_path = "sold.png"  # تأكد أن اسم الملف صحيح داخل المستودع
+colL, colC, colR = st.columns([1,3,1])
+with colL:
+    if os.path.exists(logo_path):
+        st.image(logo_path, caption="", width=120)
+with colC:
+    st.markdown('<div class="hero">', unsafe_allow_html=True)
+    st.markdown('<h1>IMS — Integrated Management System</h1>', unsafe_allow_html=True)
+    st.markdown('<h2>شركة نفط ذي قار</h2>', unsafe_allow_html=True)
+    st.markdown('<h3>شعبة الجودة وتقويم الأداء المؤسسي</h3>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="iso-banner">CERTIFIED ISO 9001:2015 — Bureau Veritas'
+            '<div class="iso-sub">Quality Management System — UKAS Accredited</div>'
+            '</div>', unsafe_allow_html=True)
+
+# بطاقة الإنجاز الوطني
 st.markdown(
     """
-    <div class="card">
-      <h4><span>إنجاز وطني لشركة نفط ذي قار</span></h4>
+    <div class="award">
+      <h4>إنجاز وطني لشركة نفط ذي قار</h4>
       <p>
-      يُعَد حصول شركة نفط ذي قار على شهادة الاعتماد الدولي <span class="gold">ISO 9001:2015</span> من مؤسسة
-      <b>Bureau Veritas</b> البريطانية إنجازًا وطنيًا واستراتيجيًا، تحقق بفضل الجهود الكبيرة لشعبة الجودة وتقويم الأداء المؤسسي
-      في ترسيخ أنظمة الإدارة المتكاملة وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة،
-      دعمًا لمسيرتها نحو <b>التميز</b> و<b>الشفافية</b> والالتزام بأعلى المعايير العالمية.
+      يُعَد حصول شركة نفط ذي قار على شهادة الاعتماد الدولي <span class="em">ISO 9001:2015</span>
+      من مؤسسة <span class="em">Bureau Veritas</span> البريطانية إنجازًا وطنيًا واستراتيجيًا،
+      تحقّق بفضل الجهود الكبيرة لشعبة الجودة وتقويم الأداء المؤسسي في ترسيخ أنظمة الإدارة المتكاملة
+      وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة، دعمًا لمسيرتها
+      نحو التميّز والشفافية، والالتزام بأعلى المعايير العالمية.
       </p>
     </div>
     """,
     unsafe_allow_html=True
 )
 
-st.write("")  # فراغ بسيط
+st.divider()
 
-# -------------------------------[ اختيار القسم ]--------------------------------
-st.sidebar.write("**اختر القسم**")
+# ----------------------------[ اختيار القسم ]----------------------------
+st.sidebar.subheader("اختر القسم")
 section_ar = st.sidebar.selectbox("اختر", SECTIONS_AR, index=0)
 section_slug = SECTIONS_AR2EN[section_ar]
-section_dir = ensure_section_dir(section_slug)
+section_dir = section_dir_for(section_slug)
 
-# ------------------------------[ عرض الملفات ]---------------------------------
-st.markdown(f'<div class="sec-title">📂 الملفات الحالية (قراءة فقط)</div>', unsafe_allow_html=True)
-files = list_files(section_slug)
-if not files:
-    st.markdown('<div class="hint">لا توجد ملفات بعد في هذا القسم. استخدم لوحة التحكم لرفع الملفات بعد إدخال كلمة المرور الصحيحة.</div>', unsafe_allow_html=True)
+# -----------------------[ الملفات الحالية (قراءة فقط) ]-----------------------
+st.markdown(f'<div class="sec-title">📁 الملفات الحالية (قراءة فقط)</div>', unsafe_allow_html=True)
+all_files = files_of(section_slug)
+
+if not all_files:
+    st.info("لا توجد ملفات بعد في هذا القسم. استخدم لوحة التحكم لرفع الملفات بعد إدخال كلمة المرور الصحيحة.")
 else:
-    for name, size, path in files:
-        col1, col2, col3 = st.columns([6,2,2])
-        with col1:
-            st.markdown(f"**{name}**")
-        with col2:
-            st.markdown(human_size(size))
-        with col3:
-            st.markdown(file_download_link(name, path), unsafe_allow_html=True)
-
-st.write("")
+    with st.container(border=True):
+        for i, (name, mtime, path) in enumerate(all_files, start=1):
+            c1, c2 = st.columns([5,1])
+            with c1:
+                st.markdown(f'<div class="file-row"><div class="file-name">#{i} — {name}</div></div>', unsafe_allow_html=True)
+            with c2:
+                download_link("تنزيل", path, key=f"dl-{section_slug}-{i}")
 
 # -----------------------------[ لوحة التحكم (محمية) ]--------------------------
 st.markdown(f'<div class="sec-title">🔒 لوحة التحكم (تتطلب كلمة مرور القسم)</div>', unsafe_allow_html=True)
+
 placeholder = {
     "quality-policy":"مثال: policy-2025", "objectives":"مثال: obj-2025", "document-control":"مثال: docs-2025",
     "audit-plan":"مثال: audit-2025", "audits":"مثال: audits-2025", "non-conformance":"مثال: nc-2025",
@@ -212,27 +209,38 @@ placeholder = {
     "risks":"مثال: risks-2025",
 }.get(section_slug, "أدخل كلمة المرور")
 
-pw_raw = st.text_input("أدخل كلمة المرور", type="password", placeholder=placeholder)
-pw = normalize_pw(pw_raw)
+auth_key = f"auth_{section_slug}"
+if auth_key not in st.session_state:
+    st.session_state[auth_key] = False
 
-ok = (pw == PASSWORDS.get(section_slug))
-if not ok:
-    st.markdown('''<div class="hint">🔑 أدخل كلمة المرور الصحيحة لرفع الملفات إلى هذا القسم.</div>''', unsafe_allow_html=True)
-else:
-    # منطقة الرفع
+with st.form(f"pw_form_{section_slug}", clear_on_submit=False):
+    pw_raw = st.text_input("أدخل كلمة المرور", type="password", placeholder=placeholder)
+    submitted = st.form_submit_button("دخول")
+
+if submitted:
+    pw = normalize_pw(pw_raw)
+    st.session_state[auth_key] = (pw == PASSWORDS.get(section_slug))
+    if not st.session_state[auth_key]:
+        st.error("❌ كلمة المرور غير صحيحة.")
+
+if st.session_state[auth_key]:
     st.success("✅ تم التحقق من كلمة المرور. يمكنك رفع الملفات الآن.")
-    up = st.file_uploader(
-        f"ارفع ملف {section_ar} (حد أقصى {MAX_MB}MB لكل ملف) • الصيغ المسموحة: PDF, DOCX, XLSX, PPTX",
+    if st.button("تسجيل خروج", type="secondary"):
+        st.session_state[auth_key] = False
+        st.rerun()
+
+if st.session_state[auth_key]:
+    uploads = st.file_uploader(
+        f"ارفع ملف {section_ar} (حد أقصى {MAX_MB}MB لكل ملف) • الصيغ: PDF, DOCX, XLSX, PPTX",
         type=ACCEPT, accept_multiple_files=True
     )
-    if up:
+    if uploads:
         saved = 0
-        for f in up:
+        for f in uploads:
             data = f.read()
             if len(data) > MAX_BYTES:
                 st.error(f"❌ الملف **{f.name}** يتجاوز حد {MAX_MB}MB — لم يتم الحفظ.")
                 continue
-            # منع نفس الاسم: نضيف طابع وقت بسيط إن وجد تضارب
             dest = os.path.join(section_dir, f.name)
             if os.path.exists(dest):
                 base, ext = os.path.splitext(f.name)
@@ -242,10 +250,12 @@ else:
             saved += 1
         if saved:
             st.success(f"👍 تم حفظ {saved} ملف/ملفات إلى قسم **{section_ar}**.")
-            st.rerun()  # لإظهار القائمة المحدّثة مباشرة
+            st.rerun()
+else:
+    st.markdown('<div class="hint">🔑 أدخل كلمة المرور ثم اضغط «دخول» لتمكين رفع الملفات.</div>', unsafe_allow_html=True)
 
-# -------------------------------[ توقيع الفوتر ]--------------------------------
+# -------------------------------[ تذييل ]-------------------------------
 st.markdown(
-    '<div class="footer">تصميم وتطوير رئيس مهندسين أقدم <span class="sig">طارق مجيد الكريمي</span> ©</div>',
+    '<div class="footer">تصميم وتطوير <span class="sig">رئيس مهندسين أقدم طارق مجيد الكريمي</span> ©</div>',
     unsafe_allow_html=True
 )
