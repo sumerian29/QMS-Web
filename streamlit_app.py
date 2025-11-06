@@ -221,12 +221,12 @@ if entered_pw:
 # ===============================[ تذييل ]=============================
 st.markdown('''
 <div style="
-    background-color: #f9f9f9;
+    background-color: #ffffff;
     border-radius: 16px;
-    box-shadow: 0 4px 18px rgba(0,0,0,0.08);
-    padding: 25px 40px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.07);
+    padding: 35px 45px;
     max-width: 950px;
-    margin: 25px auto;
+    margin: 30px auto;
     direction: rtl;
     text-align: justify;
     line-height: 2.1;
@@ -234,19 +234,21 @@ st.markdown('''
     color: #1e272e;
     font-weight: 500;
 ">
+
     <p style="
         text-align: center;
         color: #b8860b;
-        font-size: 22px;
+        font-size: 24px;
         font-weight: 900;
         margin-bottom: 16px;
         border-bottom: 2px solid #b8860b;
         display: inline-block;
-        padding-bottom: 4px;
+        padding-bottom: 6px;
     ">
         إنجاز وطني لشركة نفط ذي قار
     </p>
-    <p style="margin-top: 20px;">
+
+    <p style="margin-top: 25px; text-align: justify;">
         يُعَد حصول <strong>شركة نفط ذي قار</strong> على
         <strong>شهادة الاعتماد الدولي 
         <span dir="ltr" style="display:inline-block; color:#b8860b;">ISO&nbsp;9001:2015</span></strong>
@@ -255,5 +257,6 @@ st.markdown('''
         أنظمة الإدارة المتكاملة وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة،
         دعمًا لمسيرتها نحو التميز والشفافية والالتزام بأعلى المعايير العالمية.
     </p>
+
 </div>
 ''', unsafe_allow_html=True)
