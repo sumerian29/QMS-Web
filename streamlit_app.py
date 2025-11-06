@@ -1,361 +1,255 @@
-# streamlit_app.py
-# IMS — Integrated Management System (Arabic UI) for Thi Qar Oil Company
+# ---------------------------------------------------------------
+# IMS — Integrated Management System (Arabic UI)
+# Thi Qar Oil Company — Quality & Institutional Performance Division
 # Designed & Developed by Chief Engineer Tareq Majeed Al-Karimi
+# ---------------------------------------------------------------
 
-import os
-import io
-import hashlib
-import shutil
+import os, io, base64, hashlib, shutil
 from datetime import datetime
-from typing import List
-
 import streamlit as st
-from PIL import Image
 
-# =========================
-# إعدادات عامة للصفحة
-# =========================
+# ========== إعدادات عامة ==========
 st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
 
-# =========================
-# أدوات مساعدة
-# =========================
+# ===== CSS خفيف مع دعم العربية والهوية البصرية =====
+st.markdown("""
+<style>
+:root { --brand:#0f3a5a; --gold1:#c89b0a; --gold2:#ad7e03; --bg:#eef4fb; }
+html,body,[data-testid="stApp"]{ background:var(--bg); }
+h1,h2,h3,h4,h5,h6, .st-emotion-cache-10trblm, .st-emotion-cache-1c7y2kd {
+  font-family: "Segoe UI", Tahoma, Arial, sans-serif; direction: rtl; text-align: center;
+}
+.hero-wrap{ padding:8px 0 0; }
+.hero-grid{ display:grid; grid-template-columns: 140px 1fr 140px; gap:8px; align-items:center;}
+.logo{ width:140px; height:auto; margin-inline:auto; display:block; }
+h1.title{ color:#0f3a5a; font-size:42px; line-height:1.2; margin:0 0 4px; }
+h2.sub{ color:#d19a00; font-weight:800; letter-spacing:1px; margin:6px 0 2px; }
+h3.division{ color:#0f3a5a; font-weight:700; margin:0 0 18px; }
+.badge{ background: linear-gradient(90deg, var(--gold2), var(--gold1)); color:#102b3f;
+  border-radius:14px; padding:12px 18px; font-weight:800; text-align:center; margin:0 auto 12px; width:min(1000px,95%);}
+.card{ background:#fff; border:1px solid #e6eef6; border-radius:14px; padding:16px 18px; width:min(1100px,95%); margin:8px auto;}
+.card h3{ color:#d19a00; margin:0 0 10px; border-bottom:2px solid #e8d28a; display:inline-block; padding-bottom:6px;}
+.note{ color:#0f3a5a; font-size:13px; opacity:.85; text-align:center; margin-top:8px;}
+.section-box{ background:#eef5ff; border:1px solid #d9e6f5; padding:12px 16px; border-radius:12px;}
+.file-row{ display:flex; gap:10px; align-items:center; justify-content:space-between; border-bottom:1px dashed #e8eef6; padding:8px 0;}
+.file-row:last-child{ border-bottom:none; }
+a.dl{ text-decoration:none; background:#f6faff; border:1px solid #dce8f7; padding:4px 10px; border-radius:10px;}
+input[type="password"]{ direction:ltr; }
+.footer{ text-align:center; margin:24px 0 8px; color:#0f3a5a; font-weight:600;}
+</style>
+""", unsafe_allow_html=True)
 
-BASE_DIR = os.getcwd()
+# ===== مسارات حفظ البيانات =====
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+TRASH_DIR = os.path.join(BASE_DIR, "trash")
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(TRASH_DIR, exist_ok=True)
 
-UPLOAD_BASE = os.path.join(BASE_DIR, "uploads")          # uploads/<slug>/
-DELETED_BASE = os.path.join(BASE_DIR, "deleted")          # deleted/<slug>/
-
-# الامتدادات المسموحة
-ALLOWED_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
-
-def ensure_dir(path: str):
-    os.makedirs(path, exist_ok=True)
-
-def file_hash(file_bytes: bytes) -> str:
-    return hashlib.sha256(file_bytes).hexdigest()
-
-def safe_name(name: str) -> str:
-    # حذف المحارف المزعجة
-    bad = r'\/:*?"<>|'
-    for ch in bad:
-        name = name.replace(ch, " ")
-    return "_".join(name.split())
-
-def list_files(dir_path: str) -> List[str]:
-    if not os.path.exists(dir_path):
-        return []
-    files = [f for f in os.listdir(dir_path) if os.path.isfile(os.path.join(dir_path, f))]
-    # ترتيب تنازلي حسب تاريخ التعديل
-    files.sort(key=lambda f: os.path.getmtime(os.path.join(dir_path, f)), reverse=True)
-    return files
-
-def readable_size(bytes_num: int) -> str:
-    for unit in ["B", "KB", "MB", "GB"]:
-        if bytes_num < 1024:
-            return f"{bytes_num:.1f} {unit}"
-        bytes_num /= 1024.0
-    return f"{bytes_num:.1f} TB"
-
-def ext_of(filename: str) -> str:
-    return os.path.splitext(filename)[1].lower()
-
-# =========================
-# الأقسام + كلمات السر من Secrets
-# =========================
-
-# خريطة الأقسام عربي → slug إنجليزي
+# ===== الأقسام (العربية ← مجلد) =====
 SECTIONS_AR2EN = {
-    "سياسة الجودة": "policies",
+    "سياسة الجودة": "policy",
     "الأهداف": "objectives",
-    "ضبط الوثائق": "docs",
-    "خطة التدقيق": "audit_plan",
-    "التدقيقات": "audits",
-    "عدم المطابقة": "nc",
+    "ضبط الوثائق": "doccontrol",
+    "خطة التدقيق": "auditplan",
+    "نتائج التدقيق": "audits",
+    "عدم المطابقة": "nonconf",
     "الإجراءات التصحيحية والوقائية (CAPA)": "capa",
     "قاعدة المعرفة": "kb",
     "التقارير": "reports",
     "مؤشرات الأداء (KPI)": "kpi",
-    "الإشعار": "notify",
-    "المخاطر": "risks",  # جديد
+    "التوقيع الإلكتروني": "esign",
+    "الإشعارات": "notify",
+    "المخاطر": "risks",   # جديد
 }
-
 SECTIONS_AR = list(SECTIONS_AR2EN.keys())
 
-# أسماء مفاتيح كلمات المرور داخل secrets (يمكن تعديلها من صفحة Secrets في Streamlit)
-# مثال القيم:
-# PW_POLICIES = "policy-2025"
-# PW_DOCS     = "docs-2025"
-# ...
-PW_KEYS = {
-    "policies": st.secrets.get("PW_POLICIES", ""),
-    "objectives": st.secrets.get("PW_OBJECTIVES", ""),
-    "docs": st.secrets.get("PW_DOCS", ""),
-    "audit_plan": st.secrets.get("PW_AUDIT", ""),     # خطة التدقيق
-    "audits": st.secrets.get("PW_AUDITS", ""),
-    "nc": st.secrets.get("PW_NC", ""),
-    "capa": st.secrets.get("PW_CAPA", ""),
-    "kb": st.secrets.get("PW_KB", ""),
-    "reports": st.secrets.get("PW_REPORTS", ""),
-    "kpi": st.secrets.get("PW_KPI", ""),
-    "notify": st.secrets.get("PW_NOTIFY", ""),
-    "risks": st.secrets.get("PW_RISKS", ""),          # جديد
+# ===== كلمات المرور لكل قسم =====
+PASSWORDS = {
+    "policy": "policy-2025@",
+    "objectives": "obj-2025@",
+    "doccontrol": "doc-2025@",
+    "auditplan": "plan-2025@",
+    "audits": "audit-2025@",
+    "nonconf": "nc-2025@",
+    "capa": "capa-2025@",
+    "kb": "kb-2025@",
+    "reports": "rep-2025@",
+    "kpi": "kpi-2025@",
+    "esign": "esign-2025@",
+    "notify": "notify-2025@",
+    "risks": "risk-2025@",  # قسم المخاطر
 }
 
-# =========================
-# تهيئة حالة الجلسة
-# =========================
-if "authed_sections" not in st.session_state:
-    st.session_state.authed_sections = set()  # مجموعة الأقسام المسموح بها في هذه الجلسة
+# ===== دوال مساعدة =====
+def ensure_dirs(slug: str):
+    d = os.path.join(DATA_DIR, slug); t = os.path.join(TRASH_DIR, slug)
+    os.makedirs(d, exist_ok=True); os.makedirs(t, exist_ok=True)
+    return d, t
 
-if "current_section_ar" not in st.session_state:
-    st.session_state.current_section_ar = SECTIONS_AR[0]
+def sha256_of_bytes(b: bytes) -> str:
+    h = hashlib.sha256(); h.update(b); return h.hexdigest()
 
-# =========================
-# رأس الصفحة — الشعار والعناوين
-# =========================
+def save_if_new(folder: str, filename: str, content: bytes) -> tuple[bool, str]:
+    """يحفظ الملف إن لم يكن موجوداً بنفس البصمة/الحجم. يعيد (تم_الحفظ, اسم_المسار)."""
+    incoming_sig = sha256_of_bytes(content)
+    for old in sorted(os.listdir(folder)):
+        p = os.path.join(folder, old)
+        try:
+            with open(p, "rb") as r: 
+                if sha256_of_bytes(r.read()) == incoming_sig:
+                    return False, p
+        except Exception:
+            pass
+    # اسم منسق #N — yyyymmdd_hhmmss — الاسم.ext
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    base, ext = os.path.splitext(filename)
+    newname = f"{ts}—{base}{ext}".replace(" ", "_")
+    path = os.path.join(folder, newname)
+    with open(path, "wb") as w: w.write(content)
+    return True, path
 
-# CSS بسيط
+def file_download_link(path: str) -> str:
+    name = os.path.basename(path)
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    return f'<a class="dl" href="data:application/octet-stream;base64,{b64}" download="{name}">تنزيل</a>'
+
+# ===== الشعار أعلى الصفحة =====
+left_col, mid_col, right_col = st.columns([1,3,1])
+
+with mid_col:
+    st.markdown('<div class="hero-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="hero-grid">', unsafe_allow_html=True)
+    # يسار الشبكة: شعار
+    logo_shown = False
+    logo_path = os.path.join(BASE_DIR, "sold.png")
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=140)
+        logo_shown = True
+    else:
+        # بديل HTML (في حال اختفى الملف) — نفس الاسم الذي أعطيته: sold.png
+        st.markdown(
+            '<img class="logo" src="https://raw.githubusercontent.com/sumerian29/QMS-Web/main/sold.png" onerror="this.style.display=\'none\'">',
+            unsafe_allow_html=True
+        )
+    # وسط الشبكة: العناوين
+    st.markdown("""
+      <div>
+        <h1 class="title">IMS — Integrated Management System</h1>
+        <h2 class="sub">شركة نفط ذي قار</h2>
+        <h3 class="division">شعبة الجودة وتقويم الأداء المؤسسي</h3>
+      </div>
+    """, unsafe_allow_html=True)
+    # يمين الشبكة (فراغ جمالي)
+    st.write("")
+    st.markdown('</div></div>', unsafe_allow_html=True)
+
+# ===== شريط شهادة ISO الذهبي =====
 st.markdown(
-    """
-    <style>
-      body, .stApp { background-color:#eef3f9; }
-      .hero-grid { display:grid; grid-template-columns: 110px 1fr; gap:16px; align-items:center; }
-      .logo { width: 100px; height: 100px; object-fit: contain; }
-      h1.title { font-size:44px; margin:0; color:#133a5e; text-align:center; }
-      h2.ar { font-size:34px; margin:4px 0 0; color:#b6860a; text-align:center; }
-      h3.sub  { font-size:22px; color:#133a5e; text-align:center; margin-top:2px;}
-      .gold { background: linear-gradient(90deg, #caa21e, #9d7410); color:#09263d;
-              border-radius:16px; padding:14px 20px; font-weight:700; text-align:center;
-              border:1px solid rgba(0,0,0,.1); }
-      .card { background:white; border:1px solid #d7e2ee; padding:18px; border-radius:14px; }
-      .muted { color:#315b7a; font-weight:500; }
-      .footer { text-align:center; margin-top:30px; color:#6b7f93; }
-      .download-btn { float:left; }
-      .section-title { font-size:22px; }
-      .badge { display:inline-block; padding:4px 8px; border-radius: 8px; background:#f0f6ff; border:1px solid #d5e3f5; color:#264a72; font-size:13px; }
-    </style>
-    """,
+    '<div class="badge">CERTIFIED ISO 9001:2015 — Bureau Veritas  ·  Quality Management System — UKAS Accredited</div>',
     unsafe_allow_html=True
 )
 
-# شبكة الرأس
-colA, colB, colC = st.columns([1,3,1])
-with colB:
-    st.markdown('<div class="hero-grid">', unsafe_allow_html=True)
-
-    # الشعار من sold.png (محلي)
-    LOGO_PATH = "sold.png"
-    if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, output_format="PNG", width=100)
-    else:
-        # لو الملف مفقود، نظهر عنصر فارغ
-        st.markdown('<div style="width:100px; height:100px;"></div>', unsafe_allow_html=True)
-
-    st.markdown(
-        """
-        <div>
-          <h1 class="title">IMS — Integrated Management System</h1>
-          <h2 class="ar">شركة نفط ذي قار</h2>
-          <h3 class="sub">شعبة الجودة وتقويم الأداء المؤسسي</h3>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# شريط ذهبي لمعلومات الاعتماد
-st.markdown(
-    '<div class="gold">CERTIFIED ISO 9001:2015 — Bureau Veritas &nbsp; · &nbsp; '
-    'Quality Management System — UKAS Accredited</div>',
-    unsafe_allow_html=True,
-)
-
-# بطاقة إنجاز وطني
+# ===== بطاقة الإنجاز الوطني =====
 with st.container():
-    st.markdown(
-        """
-        <div class="card">
-          <div class="section-title" style="text-align:center; color:#b6860a; font-weight:800;">
-            إنجاز وطني لشركة نفط ذي قار
-          </div>
-          <p class="muted" style="line-height:1.9; text-align:justify;">
-            يُعَد حصول شركة نفط ذي قار على شهادة الاعتماد الدولي <b>ISO 9001:2015</b>
-            من مؤسسة <b>Bureau Veritas</b> البريطانية إنجازًا وطنيًا واستراتيجيًا،
-            تحقق بفضل الجهود الكبيرة لشعبة الجودة وتقويم الأداء المؤسسي
-            في ترسيخ أنظمة الإدارة المتكاملة وتطبيق مفاهيم التحسين المستمر
-            وتعزيز ثقافة الجودة في جميع تشكيلات الشركة، دعمًا لمسيرتها نحو
-            التميز والشفافية والالتزام بأعلى المعايير العالمية.
-          </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown('<h3>إنجاز وطني لشركة نفط ذي قار</h3>', unsafe_allow_html=True)
+    st.write(
+        "يُعَد حصول شركة نفط ذي قار على شهادة الاعتماد الدولي ISO 9001:2015 من مؤسسة "
+        "Bureau Veritas البريطانية إنجازًا وطنيًا واستراتيجيًا، تحقق بفضل الجهود الكبيرة لشعبة الجودة وتقويم الأداء المؤسسي "
+        "في ترسيخ أنظمة الإدارة المتكاملة وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة، "
+        "دعمًا لمسيرتها نحو التميز والشفافية والالتزام بأعلى المعايير العالمية."
     )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# شهادة المنح — عرض آمن
-def show_certificate(cert_path: str):
-    if os.path.exists(cert_path):
-        try:
-            img = Image.open(cert_path)
-            st.image(img, caption="نسخة من شهادة المنح — Bureau Veritas — 2025 تموز", use_container_width=True)
-        except Exception as e:
-            st.warning(f"تعذّر عرض شهادة المنح. تحقق من نوع الملف/سلامته. التفاصيل: {e}")
-    else:
-        st.info("لم يتم العثور على ملف الشهادة (iso_cert.jpg). ضع الملف في جذر المستودع أو عدّل CERT_PATH.")
+# ===== صورة الشهادة (المعامل الصحيح use_column_width) =====
+CERT_PATH = os.path.join(BASE_DIR, "iso_cert.jpg")
+if os.path.exists(CERT_PATH):
+    st.image(CERT_PATH, caption="نسخة من شهادة المنح — Bureau Veritas — 2025 تموز", use_column_width=True)
+else:
+    st.info("📄 لم يتم العثور على ملف الشهادة iso_cert.jpg في المستودع. تأكد من وجوده في جذر المشروع.")
 
-CERT_PATH = "iso_cert.jpg"
-show_certificate(CERT_PATH)
+st.markdown('<div class="note">استخدم القائمة اليمنى لاختيار القسم.</div>', unsafe_allow_html=True)
+
+# ===== اختيار القسم =====
+st.sidebar.markdown("### اختر القسم")
+section_ar = st.sidebar.selectbox("اختر", SECTIONS_AR, index=SECTIONS_AR.index("سياسة الجودة"))
+slug = SECTIONS_AR2EN[section_ar]
+data_dir, trash_dir = ensure_dirs(slug)
 
 st.divider()
 
-# =========================
-# واجهة اختيار القسم
-# =========================
-left, main = st.columns([1, 3])
+# ===== عرض الملفات الحالية (روابط فقط) =====
+st.markdown("### الملفات الحالية (قراءة فقط) 🔒")
+box = st.container()
+files = sorted(os.listdir(data_dir))
+if not files:
+    box.markdown('<div class="section-box">لا توجد ملفات بعد في هذا القسم.</div>', unsafe_allow_html=True)
+else:
+    for i, fn in enumerate(files, start=1):
+        path = os.path.join(data_dir, fn)
+        link = file_download_link(path)
+        box.markdown(f"""
+        <div class="file-row">
+          <div>#{i} — {fn}</div>
+          <div>{link}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-with left:
-    st.markdown("### اختر القسم")
-    st.markdown('<span class="badge">اختر</span>', unsafe_allow_html=True)
-    chosen_ar = st.selectbox("اختر القسم", SECTIONS_AR, index=SECTIONS_AR.index(st.session_state.current_section_ar))
-    st.session_state.current_section_ar = chosen_ar
-    slug = SECTIONS_AR2EN[chosen_ar]
+# ===== لوحة التحكم (تتطلب كلمة مرور) =====
+st.markdown("### لوحة التحكم (تتطلب كلمة مرور القسم) 🔐")
+pw = st.text_input("أدخل كلمة المرور", type="password", value=st.session_state.get("last_pw", ""))
+enter = st.button("دخول")
 
-with main:
-    st.markdown("### الملفات الحالية (قراءة فقط) 📁")
-    section_dir = os.path.join(UPLOAD_BASE, slug)
-    ensure_dir(section_dir)
-
-    files = list_files(section_dir)
-
-    if not files:
-        st.info("لا توجد ملفات بعد في هذا القسم.")
+authorized = False
+if enter:
+    st.session_state["last_pw"] = pw
+    if PASSWORDS.get(slug) == pw.strip():
+        authorized = True
+        st.success("تم التحقق من كلمة المرور بنجاح. بإمكانك الرفع والحذف لهذا القسم.")
     else:
-        # روابط تنزيل فقط، بدون عرض مباشر
-        for idx, fn in enumerate(files, start=1):
-            full_path = os.path.join(section_dir, fn)
-            size = readable_size(os.path.getsize(full_path))
-            # زر تنزيل
-            with open(full_path, "rb") as f:
-                st.download_button(
-                    label=f"تنزيل",
-                    data=f.read(),
-                    file_name=fn,
-                    mime="application/octet-stream",
-                    key=f"dwn_{slug}_{fn}",
-                    help="تنزيل الملف"
-                )
-            st.write(f"**#{idx} — {fn}**  _(الحجم: {size})_")
-        st.caption("عرض روابط تنزيل فقط لتفادي تمدّد الصفحة مع كثرة الملفات.")
+        st.error("كلمة المرور غير صحيحة لهذا القسم.")
 
-    st.divider()
-
-    # =========================
-    # لوحة التحكم (محمية بكلمة مرور)
-    # =========================
-    st.markdown("### لوحة التحكم (تتطلب كلمة مرور القسم) 🔒")
-
-    # نموذج إدخال كلمة السر + زر دخول
-    with st.form(key=f"auth_form_{slug}", clear_on_submit=False):
-        pwd = st.text_input("أدخل كلمة المرور", type="password", help="أدخل كلمة المرور الصحيحة لهذا القسم")
-        auth = st.form_submit_button("دخول")
-        if auth:
-            if PW_KEYS.get(slug, "") and pwd == PW_KEYS[slug]:
-                st.session_state.authed_sections.add(slug)
-                st.success("تم التحقق بنجاح — تم فتح لوحة التحكم.")
-            else:
-                st.error("كلمة المرور غير صحيحة.")
-
-    authed = slug in st.session_state.authed_sections
-
-    # نموذج الرفع والحذف يظهر فقط عند التحقق
-    if authed:
-        st.success("لوحة التحكم مفعّلة لهذا القسم.")
-        st.markdown("#### رفع ملف إلى هذا القسم")
-
-        uploaded_file = st.file_uploader("اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...). الحد الأقصى 200MB لكل ملف.", type=None)
-
-        do_save = st.button("حفظ الملف", type="primary", help="رفع الملف وحفظه في هذا القسم")
-
-        if do_save:
-            if uploaded_file is None:
-                st.warning("يرجى اختيار ملف أولاً.")
-            else:
-                ext = ext_of(uploaded_file.name)
-                if ext not in ALLOWED_EXT:
-                    st.error("نوع الملف غير مسموح.")
-                else:
-                    # قراءة bytes لبناء بصمة
-                    file_bytes = uploaded_file.read()
-                    uploaded_file.seek(0)
-
-                    # منع التكرار: نفس الاسم أو نفس البصمة
-                    # 1) الاسم
-                    target_name = safe_name(uploaded_file.name)
-                    target_path = os.path.join(section_dir, target_name)
-                    if os.path.exists(target_path):
-                        st.error("يوجد ملف بنفس الاسم داخل هذا القسم. غيّر الاسم أو احذف الملف الحالي.")
-                    else:
-                        # 2) البصمة
-                        new_hash = file_hash(file_bytes)
-                        duplicate = False
-                        for existing in files:
-                            ex_path = os.path.join(section_dir, existing)
-                            try:
-                                with open(ex_path, "rb") as exf:
-                                    if file_hash(exf.read()) == new_hash:
-                                        duplicate = True
-                                        break
-                            except Exception:
-                                pass
-                        if duplicate:
-                            st.error("تم العثور على ملف مطابق (نفس المحتوى) داخل هذا القسم. تم إيقاف الحفظ.")
-                        else:
-                            # تسمية قياسية: رقم تسلسلي + تاريخ + الاسم
-                            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-                            serial = len(files) + 1
-                            final_name = f"{serial:03d}—{timestamp}—{target_name}"
-                            final_path = os.path.join(section_dir, final_name)
-                            try:
-                                with open(final_path, "wb") as f:
-                                    f.write(file_bytes)
-                                st.success("تم الحفظ بنجاح.")
-                            except Exception as e:
-                                st.error(f"تعذّر الحفظ: {e}")
-
-        st.divider()
-
-        st.markdown("#### حذف جماعي (نقل إلى سلة المحذوفات)")
-        current_files = list_files(section_dir)
-        if not current_files:
-            st.info("لا توجد ملفات لحذفها.")
+if authorized:
+    # --- الرفع (منع التكرار الحقيقي) ---
+    st.markdown("#### رفع ملف إلى هذا القسم")
+    up = st.file_uploader("اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG…)", type=None, key=f"uploader_{slug}")
+    if up is not None:
+        content = up.read()
+        # أمنع إعادة الحفظ عند إعادة التشغيل: قارن مع آخر بصمة رفعت
+        last_sig_key = f"last_sig_{slug}"
+        sig = sha256_of_bytes(content)
+        if st.session_state.get(last_sig_key) == sig:
+            st.info("تمت معالجة هذا الملف بالفعل في هذه الجلسة.")
         else:
-            # اختيار عدة ملفات
-            to_delete = st.multiselect("اختر الملفات:", current_files, help="اختر ملفًا أو أكثر لنقلهم إلى سلة المحذوفات")
-            if st.button("نقل الملفات المحددة إلى سلة المحذوفات", help="لا يتم الحذف النهائي — يمكن استرجاع الملفات من مجلد deleted"):
-                if not to_delete:
-                    st.warning("لم تُحدد أي ملفات.")
-                else:
-                    trash_dir = os.path.join(DELETED_BASE, slug)
-                    ensure_dir(trash_dir)
-                    moved = 0
-                    for name in to_delete:
-                        src = os.path.join(section_dir, name)
-                        dst = os.path.join(trash_dir, name)
-                        if os.path.exists(src):
-                            try:
-                                shutil.move(src, dst)
-                                moved += 1
-                            except Exception as e:
-                                st.error(f"تعذّر نقل {name}: {e}")
-                    st.success(f"تم نقل {moved} ملف/ملفات إلى سلة المحذوفات.")
-                    st.info("لتحديث القائمة، أعد تحميل الصفحة (CTRL+R) أو غيّر القسم ثم أعده.")
+            saved, saved_path = save_if_new(data_dir, up.name, content)
+            st.session_state[last_sig_key] = sig
+            if saved:
+                st.success("تم الحفظ بنجاح.")
+            else:
+                st.warning("هذا الملف موجود مسبقًا (نفس المحتوى). لم يتم إنشاء نسخة مكررة.")
 
+    # --- سلة المحذوفات / الحذف الانتقائي أو الجماعي ---
+    st.markdown("#### حذف جماعي (نقل إلى سلة المحذوفات)")
+    current = sorted(os.listdir(data_dir))
+    if current:
+        to_remove = st.multiselect("اختر الملفات:", current, key=f"sel_{slug}")
+        colA, colB = st.columns([1,2])
+        if colA.button("حذف الملفات المحددة"):
+            cnt = 0
+            for name in to_remove:
+                src = os.path.join(data_dir, name)
+                dst = os.path.join(trash_dir, f"{datetime.now().strftime('%Y%m%d%H%M%S')}—{name}")
+                try:
+                    shutil.move(src, dst); cnt += 1
+                except Exception as e:
+                    st.error(f"تعذر نقل {name} إلى سلة المحذوفات: {e}")
+            if cnt:
+                st.success(f"تم نقل {cnt} ملف/ملفات إلى سلة المحذوفات.")
+                st.info("↻ قم بتحديث الصفحة أو اختر القسم مرة أخرى لتحديث القائمة.")
     else:
-        st.info("أدخل كلمة المرور الصحيحة واضغط [دخول] لتفعيل لوحة التحكم.")
+        st.info("لا توجد ملفات لحذفها في هذا القسم.")
 
-# تذييل لطيف
-st.markdown(
-    '<div class="footer">تصميم وتطوير رئيس مهندسين أقدم <b>طارق مجيد الكريمي</b></div>',
-    unsafe_allow_html=True
-)
+# ===== تذييل =====
+st.markdown('<div class="footer">تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي</div>', unsafe_allow_html=True)
