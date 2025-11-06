@@ -46,8 +46,15 @@ st.markdown("""
   direction: rtl; text-align: justify; line-height: 2.05;
 }
 .ims-ann-title{
-  margin: 0 0 10px 0; text-align:center; font-size: 24px; font-weight: 800;
-  color:#b58500; letter-spacing:.2px; border-bottom: 2px solid #e6c766; display:inline-block; padding-bottom:6px;
+  margin: 0 auto 10px auto;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 800;
+  color: #b58500;
+  letter-spacing: .2px;
+  border-bottom: 2px solid #e6c766;
+  display: table;
+  padding-bottom: 6px;
 }
 .ims-ann-body{ margin: 0; font-size: 17px; color:#0f172a }
 .ims-iso{ color:#b58500; font-weight:800 }
@@ -244,3 +251,4 @@ st.markdown("""
 تصميم وتطوير رئيس مهندسين أقدم <span>طارق مجيد الكريمي</span>
 </div>
 """, unsafe_allow_html=True)
+
