@@ -221,12 +221,12 @@ if entered_pw:
 # ===============================[ تذييل ]=============================
 st.markdown('''
 <div style="
-    background-color: #ffffff;
+    background-color: #f9f9f9;
     border-radius: 16px;
     box-shadow: 0 4px 18px rgba(0,0,0,0.08);
     padding: 25px 40px;
     max-width: 950px;
-    margin: 20px auto;
+    margin: 25px auto;
     direction: rtl;
     text-align: justify;
     line-height: 2.1;
@@ -234,12 +234,21 @@ st.markdown('''
     color: #1e272e;
     font-weight: 500;
 ">
-    <p style="text-align: center; color: #b8860b; font-size: 20px; font-weight: 800; margin-bottom: 12px;">
+    <p style="
+        text-align: center;
+        color: #b8860b;
+        font-size: 22px;
+        font-weight: 900;
+        margin-bottom: 16px;
+        border-bottom: 2px solid #b8860b;
+        display: inline-block;
+        padding-bottom: 4px;
+    ">
         إنجاز وطني لشركة نفط ذي قار
     </p>
-    <p>
+    <p style="margin-top: 20px;">
         يُعَد حصول <strong>شركة نفط ذي قار</strong> على
-        <strong>شهادة الاعتماد الدولي
+        <strong>شهادة الاعتماد الدولي 
         <span dir="ltr" style="display:inline-block; color:#b8860b;">ISO&nbsp;9001:2015</span></strong>
         من مؤسسة <strong>Bureau Veritas</strong> البريطانية إنجازًا وطنيًا واستراتيجيًا،
         تحقق بفضل الجهود الكبيرة لشعبة <strong>الجودة وتقويم الأداء المؤسسي</strong> في ترسيخ
@@ -248,5 +257,3 @@ st.markdown('''
     </p>
 </div>
 ''', unsafe_allow_html=True)
-
-
