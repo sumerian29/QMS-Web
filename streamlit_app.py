@@ -220,138 +220,34 @@ if entered_pw:
 
 # ===============================[ تذييل ]=============================
 # ====== 1) CSS لضبط الفراغات ومنع قص الشعارات والتداخل ======
-st.markdown("""
-<style>
-/* حواف عامة مريحة */
-.block-container { padding-top: 1.4rem !important; }
-
-/* منع أي قصّ لعناصر الهيدر */
-.hero-wrap { 
-  max-width: 1100px; 
-  margin: 0 auto 8px auto; 
-  padding: 8px 10px; 
-}
-
-/* صف الأعمدة: شعار + عناوين */
-.hero-row {
-  display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 16px;
-  align-items: center;
-}
-
-/* الشعار: بدون قصّ وبقياس ثابت */
-.toc-logo {
-  width: 120px; 
-  height: auto; 
-  object-fit: contain; 
-  display: block;
-}
-
-/* العناوين الإنكليزية */
-.ims-title {
-  font-size: 44px;
-  line-height: 1.15;
-  font-weight: 800;
-  color: #0a3d62;
-  margin: 0;
-  text-align: center;
-}
-
-/* عنوان الشركة بالعربية */
-.co-ar {
-  font-size: 34px;
-  font-weight: 800;
-  color: #b8860b;
-  text-align: center;
-  margin: 6px 0 0 0;
-}
-
-/* شعبة الجودة بالعربية – بدون أيقونة رابط (لا نستخدم st.header) */
-.div-ar {
-  font-size: 22px;
-  font-weight: 700;
-  color: #233142;
-  text-align: center;
-  margin: 2px 0 10px 0;
-}
-
-/* صندوق الفقرة العربية تحت الشريط الذهبي */
-.ar-card {
-  background: #ffffff;
-  border-radius: 14px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-  padding: 22px 26px;
-  max-width: 980px;
-  margin: 14px auto 18px auto;
-  direction: rtl;
-  text-align: justify;
-  line-height: 2.0;
-  font-size: 18px;
-  color: #1c2833;
-  font-weight: 500;
-}
-
-/* عنوان الفقرة الذهبي */
-.ar-card .title {
-  text-align: center;
-  color: #b8860b;
-  font-size: 22px;
-  font-weight: 900;
-  margin: 0 0 10px 0;
-  display: inline-block;
-  border-bottom: 2px solid #b8860b;
-  padding-bottom: 4px;
-}
-
-/* إبراز المصطلحات الأجنبية داخل العربية وتفادي انقلاب ترتيبها */
-.ltr-chip {
-  direction: ltr;
-  display: inline-block;
-  white-space: nowrap;
-  font-weight: 800;
-}
-.ltr-chip.gold { color: #b8860b; }
-
-/* مسافة صغيرة أسفل الشريط الذهبي */
-.badge-gap { height: 6px; }
-</style>
-""", unsafe_allow_html=True)
-
-# ====== 2) ترويسة: شعار + IMS + عناوين عربية بدون قصّ ======
-st.markdown("""
-<div class="hero-wrap">
-  <div class="hero-row">
-    <div>
-      <img class="toc-logo" src="https://raw.githubusercontent.com/sumerian29/QMS-Web/main/sold.png" alt="Thi Qar Oil Company">
-    </div>
-    <div>
-      <h1 class="ims-title">IMS — Integrated Management System</h1>
-      <div class="co-ar">شركة نفط ذي قار</div>
-      <div class="div-ar">شعبة الجودة وتقويم الأداء المؤسسي</div>
-    </div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-# (أبْقِ الشريط الذهبي كما هو عندك… ثم ضع الفقرة العربية التالية بعده مباشرة)
-
-# ====== 3) فقرة الإنجاز العربية (منع تداخل العربية/الإنكليزية وضبط الاصطفاف) ======
-st.markdown("""
-<div class="badge-gap"></div>
-
-<div class="ar-card">
-  <div class="title">إنجاز وطني لشركة نفط ذي قار</div>
-  <p>
-    يُعَد حصول <strong>شركة نفط ذي قار</strong> على
-    <span class="ltr-chip gold">ISO&nbsp;9001:2015</span>
-    من مؤسسة <span class="ltr-chip">Bureau&nbsp;Veritas</span> البريطانية
-    إنجازًا وطنيًا واستراتيجيًا، تحقق بفضل الجهود الكبيرة لشعبة
-    <strong>الجودة وتقويم الأداء المؤسسي</strong> في ترسيخ أنظمة الإدارة المتكاملة
+# ====== إنجاز وطني (نسخة aa) أعلى الصفحة ======
+aa_html = """
+<div class="ims-ann-card">
+  <h3 class="ims-ann-title">إنجاز وطني لشركة نفط ذي قار</h3>
+  <p class="ims-ann-body">
+    يُعَد حصول شركة نفط ذي قار على شهادة الاعتماد الدولي
+    <span class="ims-iso">ISO 9001:2015</span>
+    من مؤسسة <span class="ims-bv">Bureau Veritas</span> البريطانية إنجازًا وطنيًا واستراتيجيًا،
+    تحقق بفضل الجهود الكبيرة لشعبة الجودة وتقويم الأداء المؤسسي في ترسيخ أنظمة الإدارة المتكاملة
     وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة،
     دعمًا لمسيرتها نحو التميز والشفافية والالتزام بأعلى المعايير العالمية.
   </p>
 </div>
-""", unsafe_allow_html=True)
-
-
+<style>
+.ims-ann-card{
+  max-width: 980px; margin: 20px auto 32px auto; padding: 22px 24px;
+  background:#ffffff; border:1px solid #e6edf3; border-radius:16px;
+  box-shadow: 0 2px 6px rgba(16,24,40,.04);
+  direction: rtl; text-align: justify; line-height: 2.05;
+}
+.ims-ann-title{
+  margin: 0 0 10px 0; text-align:center; font-size: 24px; font-weight: 800;
+  color:#b58500; letter-spacing:.2px; border-bottom: 2px solid #e6c766; display:inline-block; padding-bottom:6px;
+}
+.ims-ann-body{ margin: 0; font-size: 17px; color:#0f172a }
+.ims-iso{ color:#b58500; font-weight:800 }
+.ims-bv{ font-weight:700 }
+</style>
+"""
+st.markdown(aa_html, unsafe_allow_html=True)
+# ====== نهاية إنجاز وطني ======
