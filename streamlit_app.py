@@ -1,7 +1,7 @@
-# --------------------------------------------------------------
-# IMS — Thi Qar Oil Company (Arabic UI) • Streamlit
-# تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي
-# --------------------------------------------------------------
+# ------------------------------------------------------------
+# IMS / File Console (Arabic UI) — with Trash & Restore
+# Designed & Developed by Chief Engineer Tareq Majeed Al-Karimi
+# ------------------------------------------------------------
 
 import os
 import io
@@ -11,20 +11,34 @@ from typing import List, Tuple
 
 import streamlit as st
 
-# ========================= إعدادات عامة =========================
-APP_TITLE = "IMS — Thi Qar Oil Company"
-BASE_DIR = "uploads"              # مجلد حفظ الملفات
-MAX_MB = 200                      # حد الحجم لكل ملف
-MAX_BYTES = MAX_MB * 1024 * 1024
+# ==========================
+# ضبط عام
+# ==========================
+st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
 
-# صيغ مسموحة (تنزيل فقط، بدون معاينة تلقائية)
-ACCEPT = ["pdf", "docx", "xlsx", "pptx"]
+# ألوان وتنسيق خفيف
+st.markdown("""
+<style>
+  body, .stApp { background-color:#f3f7fb; }
+  .hero { background:#0b4a6f0d; border-radius:14px; padding:10px 16px; margin:6px 0 20px; 
+          border:1px solid #e7eef6; font-weight:600; text-align:center;}
+  .gold { background:linear-gradient(90deg,#b8860b,#cda434,#b8860b); color:#13233a;
+          padding:10px 16px; border-radius:12px; font-weight:700; }
+  .code-note { color:#6b7280; font-size:12px; }
+  .card { background:white; border:1px solid #eaeef4; border-radius:14px; padding:12px 14px; }
+  .muted { color:#6b7280; font-size:13px; }
+  .sig { text-align:center; color:#a07a00; font-weight:700; margin-top:10px;}
+  .center { text-align:center; }
+</style>
+""", unsafe_allow_html=True)
 
-# أقسام النظام (عربي ← مفتاح إنجليزي)
+# ==========================
+# الأقسام + كلمات المرور (من Secrets)
+# ==========================
 SECTIONS_AR2EN = {
     "سياسة الجودة": "policies",
     "الأهداف": "objectives",
-    "ضبط الوثائق": "document-control",
+    "ضبط الوثائق": "docs",
     "خطة التدقيق": "audit-plan",
     "نتائج التدقيق": "audits",
     "عدم المطابقة": "nc",
@@ -33,15 +47,15 @@ SECTIONS_AR2EN = {
     "التقارير": "reports",
     "مؤشرات الأداء (KPI)": "kpi",
     "التوقيع الإلكتروني": "esign",
-    "التنبيهات": "notify",
-    "المخاطر": "risks",  # القسم الجديد
+    "الإشعارات": "notify",
+    "المخاطر": "risks",  # جديد
 }
 
-# مفاتيح كلمات المرور (تُقرأ من Secrets)
-PW_KEYS = {
+# اربط كل slug بمفتاح السر في Secrets
+SECRET_KEYS = {
     "policies": "PW_POLICIES",
     "objectives": "PW_OBJECTIVES",
-    "document-control": "PW_DOCS",
+    "docs": "PW_DOCS",
     "audit-plan": "PW_AUDIT",
     "audits": "PW_AUDITS",
     "nc": "PW_NC",
@@ -51,248 +65,296 @@ PW_KEYS = {
     "kpi": "PW_KPI",
     "esign": "PW_ESIGN",
     "notify": "PW_NOTIFY",
-    "risks": "PW_RISKS",  # مضاف
+    "risks": "PW_RISKS",  # أضِف هذا في Secrets
 }
 
-# ========================= أدوات مساعدة =========================
-def ensure_dir(path: str) -> None:
-    os.makedirs(path, exist_ok=True)
+# جذر التخزين
+BASE_DIR = os.path.join(os.getcwd(), "uploads")
+TRASH_ROOT = os.path.join(BASE_DIR, ".trash")
 
-def human_size(num_bytes: int) -> str:
-    for unit in ["B","KB","MB","GB","TB"]:
-        if num_bytes < 1024:
-            return f"{num_bytes:.1f} {unit}"
-        num_bytes /= 1024
-    return f"{num_bytes:.1f} PB"
 
-def file_sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+# ==========================
+# أدوات مساعدة
+# ==========================
+def ensure_dir(p: str):
+    os.makedirs(p, exist_ok=True)
 
-def list_files(section_slug: str) -> List[Tuple[str, int, str]]:
+def section_dir(slug: str) -> str:
+    p = os.path.join(BASE_DIR, slug)
+    ensure_dir(p)
+    return p
+
+def human_size(n: int) -> str:
+    for unit in ["B","KB","MB","GB"]:
+        if n < 1024:
+            return f"{n:.0f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+def sha256_bytes(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
+
+def list_files(slug: str) -> List[Tuple[str, int, str]]:
+    """يعيد قائمة (name, size, path) مرتبة تصاعدياً بالأحدث في الأعلى."""
+    root = section_dir(slug)
+    files = []
+    for nm in os.listdir(root):
+        path = os.path.join(root, nm)
+        if os.path.isfile(path):
+            files.append((nm, os.path.getsize(path), path))
+    # الأحدث أولاً: باستخدام الاسم الذي يحوي الطابع
+    files.sort(key=lambda x: x[0], reverse=True)
+    return files
+
+def auth_state_key(slug: str) -> str:
+    return f"auth_{slug}"
+
+def save_upload(slug: str, up_file) -> str:
     """
-    يعيد قائمة (اسم, حجم, مسار) مرتبة بالزمن تنازليًا.
+    يحفظ ملف الرفع بأمان مع:
+    - بصمة SHA لمنع التكرار الحقيقي.
+    - اسم قياسي: HHMMSS-YYYYMMDD_الاسم-الأصلي.ext
     """
-    section_dir = os.path.join(BASE_DIR, section_slug)
-    if not os.path.isdir(section_dir):
-        return []
-    rows = []
-    for name in os.listdir(section_dir):
-        p = os.path.join(section_dir, name)
-        if os.path.isfile(p):
+    root = section_dir(slug)
+    raw = up_file.read()
+    digest = sha256_bytes(raw)
+
+    # إذا ملف مطابق موجود (حسب بصمة) فلا نحفظ
+    # نتحقق عبر ملفات .sha جانب الملف
+    for nm in os.listdir(root):
+        p = os.path.join(root, nm)
+        if p.endswith(".sha") or not os.path.isfile(p):
+            continue
+        sha_path = p + ".sha"
+        if os.path.exists(sha_path):
             try:
-                size = os.path.getsize(p)
-                rows.append((name, size, p))
-            except OSError:
+                with open(sha_path, "r", encoding="utf-8") as fh:
+                    if fh.read().strip() == digest:
+                        return ""  # مكرر تماماً
+            except:
                 pass
-    # الأحدث أولاً
-    rows.sort(key=lambda r: os.path.getmtime(r[2]), reverse=True)
-    return rows
 
-def read_secret(key: str, default: str = "") -> str:
+    stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
+    base, ext = os.path.splitext(up_file.name)
+    safe_base = base.replace("/", "_").replace("\\", "_").replace(" ", "_")
+    fname = f"{stamp}_{safe_base}{ext}"
+    fpath = os.path.join(root, fname)
+
+    # اكتب الملف
+    with open(fpath, "wb") as fh:
+        fh.write(raw)
+
+    # اكتب بصمة جانبية
+    with open(fpath + ".sha", "w", encoding="utf-8") as fh:
+        fh.write(digest)
+    return fpath
+
+def move_to_trash(slug: str, src_path: str) -> str:
+    ensure_dir(TRASH_ROOT)
+    trash_sec = os.path.join(TRASH_ROOT, slug)
+    ensure_dir(trash_sec)
+    base = os.path.basename(src_path)
+    name, ext = os.path.splitext(base)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = os.path.join(trash_sec, f"{name}__DELETED__{stamp}{ext}")
+    # انقل الملف
+    os.replace(src_path, dst)
+    # انقل ملف البصمة إن وُجد
+    sha_src = src_path + ".sha"
+    if os.path.exists(sha_src):
+        os.replace(sha_src, dst + ".sha")
+    return dst
+
+def list_trash(slug: str) -> List[Tuple[str, int, str]]:
+    tdir = os.path.join(TRASH_ROOT, slug)
+    if not os.path.isdir(tdir):
+        return []
+    files = []
+    for nm in os.listdir(tdir):
+        p = os.path.join(tdir, nm)
+        if os.path.isfile(p) and not nm.endswith(".sha"):
+            files.append((nm, os.path.getsize(p), p))
+    files.sort(key=lambda x: x[0], reverse=True)
+    return files
+
+def restore_from_trash(slug: str, trash_path: str) -> str:
+    """يعيد الملف إلى مجلد القسم ويحذف لاحقًا لاحقة __DELETED__ من الاسم."""
+    root = section_dir(slug)
+    base = os.path.basename(trash_path)
+    name, ext = os.path.splitext(base)
+    original = name.split("__DELETED__")[0] + ext
+    dst = os.path.join(root, original)
+
+    # لو الاسم موجود، أضف طابع "RESTORED"
+    if os.path.exists(dst):
+        stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
+        dst = os.path.join(root, f"{original[:-len(ext)]}__RESTORED__{stamp}{ext}")
+
+    os.replace(trash_path, dst)
+    # أعد بصمة الملف إن وُجدت
+    sha_src = trash_path + ".sha"
+    if os.path.exists(sha_src):
+        os.replace(sha_src, dst + ".sha")
+    return dst
+
+def delete_forever(path: str):
+    """حذف نهائي للملف من سلة المحذوفات (وملف البصمة)."""
     try:
-        return st.secrets[key]
-    except Exception:
-        return default
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    sha = path + ".sha"
+    if os.path.exists(sha):
+        try:
+            os.remove(sha)
+        except FileNotFoundError:
+            pass
 
-def auth_state_key(section_slug: str) -> str:
-    return f"auth_{section_slug}"
 
-def uploader_key(section_slug: str) -> str:
-    return f"uploader_{section_slug}"
-
-# ========================= تهيئة الصفحة =========================
-st.set_page_config(page_title=APP_TITLE, layout="wide")
-
-# تنسيق بسيط
-st.markdown("""
-<style>
-body, .stApp { background-color: #f1f6fb; }
-.block-container { padding-top: 1.2rem; }
-h1, h2, h3 { font-family: 'Segoe UI', Tahoma, sans-serif; }
-.gold { color:#C29400; font-weight:700; }
-.card {
-  background: #ffffff; border: 1px solid #e8eef6; border-radius: 14px;
-  padding: 16px 20px; box-shadow: 0 6px 20px rgba(0,0,0,0.05);
-}
-.badge {
-  display:inline-block; padding:10px 18px; border-radius:14px;
-  background: linear-gradient(90deg,#caa21d,#a87a00); color:#0c2a3e; font-weight:800;
-}
-.code-note { color:#4d6e87; font-size:.92rem; }
-.footer { text-align:center; color:#8aa1b3; padding:28px 0 10px; }
-</style>
-""", unsafe_allow_html=True)
-
-colL, colC, colR = st.columns([1.2, 2.3, 1])
-
+# ==========================
+# واجهة الهيرو المختصرة
+# ==========================
+colL, colC, colR = st.columns([1,2,1])
 with colC:
-    st.markdown(f"<h1 style='text-align:center;margin:0 0 6px'>{APP_TITLE}</h1>", unsafe_allow_html=True)
-    st.markdown("<h2 class='gold' style='text-align:center;margin:6px 0'>شركة نفط ذي قار</h2>", unsafe_allow_html=True)
-    st.markdown("<h4 style='text-align:center;margin-top:-6px'>شعبة الجودة وتقويم الأداء المؤسسي</h4>", unsafe_allow_html=True)
-    st.markdown("<div class='badge' style='text-align:center;margin:18px auto'>CERTIFIED ISO 9001:2015 — Bureau Veritas<br>Quality Management System — UKAS Accredited</div>", unsafe_allow_html=True)
-
-# بطاقة الإنجاز (ثابتة أعلى الصفحة)
-with st.container():
+    st.markdown("<div class='hero gold'>Quality Management System — UKAS Accredited</div>", unsafe_allow_html=True)
+    st.markdown("<div class='center'><h3>إنجاز وطني لشركة نفط ذي قار</h3></div>", unsafe_allow_html=True)
     st.markdown(
-        """
-<div class='card' style='max-width:1100px;margin: 10px auto'>
-  <h4 class='gold' style='text-align:center;margin-top:2px'>إنجازٌ وطنيٌ لشركة نفط ذي قار</h4>
-  <p style='direction:rtl; text-align:justify; line-height:2'>
-    يُعَد حصول شركة نفط ذي قار على شهادة الاعتماد الدولي <b style="color:#b8860b">ISO 9001:2015</b>
-    من مؤسسة <b>Bureau Veritas</b> البريطانية إنجازًا وطنيًا واستراتيجيًا،
-    تحقق بفضل الجهود الكبيرة لشعبة الجودة وتقويم الأداء المؤسسي في ترسيخ أنظمة الإدارة المتكاملة
-    وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة،
-    دعمًا لمسيرتها نحو التميز والشفافية، والالتزام بأعلى المعايير العالمية.
-  </p>
-</div>
-        """,
-        unsafe_allow_html=True,
+        """<div class='card center'>
+        يُعَد حصول شركة نفط ذي قار على شهادة الاعتماد الدولي <b>ISO 9001:2015</b> من مؤسسة <b>Bureau Veritas</b>
+        إنجازًا وطنيًا واستراتيجيًا، تحقق بفضل الجهود الكبيرة لشعبة الجودة وتقويم الأداء المؤسسي في ترسيخ أنظمة الإدارة المتكاملة
+        وتطبيق مفاهيم التحسين المستمر وتعزيز ثقافة الجودة في جميع تشكيلات الشركة، دعمًا لمسيرتها نحو التميز والشفافية والالتزام بأعلى المعايير العالمية.
+        </div>""",
+        unsafe_allow_html=True
     )
 
-# ========================= اختيار القسم =========================
-st.sidebar.header("اختر القسم")
-section_ar = st.sidebar.selectbox("اختر", list(SECTIONS_AR2EN.keys()))
-section_slug = SECTIONS_AR2EN[section_ar]
-section_dir = os.path.join(BASE_DIR, section_slug)
-ensure_dir(section_dir)
+st.divider()
 
-# حالة الدخول للقسم
-auth_key = auth_state_key(section_slug)
-if auth_key not in st.session_state:
-    st.session_state[auth_key] = False
+# ==========================
+# اختيار القسم
+# ==========================
+st.sidebar.markdown("### اختر القسم")
+sec_ar = st.sidebar.selectbox("اختر", list(SECTIONS_AR2EN.keys()))
+section_slug = SECTIONS_AR2EN[sec_ar]
 
-# ========================= عرض الملفات (روابط تنزيل) =========================
+# التحقق من كلمة المرور من Secrets
+sec_key = SECRET_KEYS.get(section_slug, "")
+section_password = st.secrets.get(sec_key, "") if sec_key else ""
+
+
+# ==========================
+# عرض الملفات (قراءة فقط)
+# ==========================
 st.markdown("### الملفات الحالية (قراءة فقط) 🔐")
 files = list_files(section_slug)
 if not files:
     st.info("لا توجد ملفات بعد في هذا القسم. استخدم لوحة التحكم لرفع الملفات بعد إدخال كلمة المرور الصحيحة.")
 else:
     for idx, (name, size, path) in enumerate(files, start=1):
-        c1, c2 = st.columns([4,1])
+        c1, c2, c3 = st.columns([4,1,1])
         with c1:
             st.markdown(f"**#{idx} — {name}**  <span class='code-note'>({human_size(size)})</span>", unsafe_allow_html=True)
         with c2:
             with open(path, "rb") as fh:
                 st.download_button("تنزيل", data=fh.read(), file_name=name, type="secondary", key=f"dl_{section_slug}_{idx}")
+        with c3:
+            if st.session_state.get(auth_state_key(section_slug), False):
+                if st.button("حذف", type="primary", key=f"rm_{section_slug}_{idx}"):
+                    st.warning(f"سيتم نقل الملف **{name}** إلى سلة المحذوفات.")
+                    if st.button(f"تأكيد حذف #{idx}", key=f"rm_cf_{section_slug}_{idx}"):
+                        try:
+                            move_to_trash(section_slug, path)
+                            st.success("تم نقل الملف إلى سلة المحذوفات.")
+                            st.experimental_rerun()
+                        except Exception as e:
+                            st.error(f"تعذّر الحذف: {e}")
 
-# ========================= لوحة التحكم (كلمة مرور + رفع) =========================
-st.markdown("---")
+# ==========================
+# لوحة التحكم (تتطلب كلمة مرور)
+# ==========================
 st.markdown("### لوحة التحكم (تتطلب كلمة مرور القسم) 🔒")
 
-# نموذج الدخول
-with st.form(f"auth_form_{section_slug}"):
-    pw_in = st.text_input("أدخل كلمة المرور", type="password", help="كلمة المرور الخاصة بالقسم المحدد في اليسار.")
-    auth_btn = st.form_submit_button("دخول")
-    if auth_btn:
-        want = read_secret(PW_KEYS.get(section_slug, ""), "")
-        if want and pw_in == want:
-            st.session_state[auth_key] = True
-            st.success(f"تم التحقق — أذونات الرفع مفعّلة لقسم «{section_ar}».")
-        else:
-            st.session_state[auth_key] = False
-            st.error("كلمة المرور غير صحيحة.")
+# إدخال كلمة المرور + زر دخول
+pw_col, btn_col = st.columns([3,1])
+entered = pw_col.text_input("أدخل كلمة المرور", type="password", placeholder="مثال: policy-2025")
+login = btn_col.button("دخول")
 
-# زر خروج
-col_a, col_b = st.columns([1,5])
-with col_a:
-    if st.session_state[auth_key]:
-        if st.button("خروج من وضع الإدارة", type="secondary"):
-            st.session_state[auth_key] = False
-            st.experimental_rerun()
+if login:
+    if entered and section_password and entered.strip() == section_password.strip():
+        st.session_state[auth_state_key(section_slug)] = True
+        st.success("تم الدخول بنجاح. يمكنك الآن رفع الملفات أو إدارة سلة المحذوفات.")
+    else:
+        st.error("كلمة المرور غير صحيحة.")
 
-# نموذج الرفع (يظهر فقط بعد الدخول)
-if st.session_state[auth_key]:
-    st.info(f"مسموح برفع ملفات إلى قسم **{section_ar}**. الحد الأقصى {MAX_MB}MB لكل ملف. الصيغ: {', '.join(ACCEPT)}")
+# إذا مُصادق
+if st.session_state.get(auth_state_key(section_slug), False):
 
-    with st.form(f"upload_form_{section_slug}", clear_on_submit=True):
-        uploads = st.file_uploader(
-            f"ارفع ملف/ملفات قسم {section_ar}",
-            type=ACCEPT,
-            accept_multiple_files=True,
-            key=uploader_key(section_slug),
+    # رفع ملفات
+    st.markdown("#### رفع ملف إلى هذا القسم")
+    up = st.file_uploader("اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None)
+    if up is not None:
+        try:
+            saved = save_upload(section_slug, up)
+            if saved == "":
+                st.warning("تم تجاهل الرفع: هذا الملف مُكرر تمامًا (نفس البصمة).")
+            else:
+                st.success("تم الحفظ بنجاح.")
+                st.experimental_rerun()
+        except Exception as e:
+            st.error(f"تعذّر الحفظ: {e}")
+
+    # حذف جماعي
+    cur_files = list_files(section_slug)
+    if cur_files:
+        st.markdown("#### حذف جماعي (نقل إلى سلة المحذوفات)")
+        sel = st.multiselect(
+            "اختر الملفات:",
+            options=[f"#{idx} — {nm}" for idx, (nm, _, _) in enumerate(cur_files, start=1)],
         )
-        do_upload = st.form_submit_button("رفع الملفات")
+        if st.button("حذف الملفات المحددة"):
+            if not sel:
+                st.info("لم يتم اختيار أي ملف.")
+            else:
+                idx_to_path = {i+1: p for i, (_, _, p) in enumerate(cur_files)}
+                removed = 0
+                for token in sel:
+                    try:
+                        num = int(token.split("—")[0].strip().lstrip("#"))
+                        move_to_trash(section_slug, idx_to_path[num])
+                        removed += 1
+                    except Exception as e:
+                        st.error(f"فشل حذف {token}: {e}")
+                if removed:
+                    st.success(f"تم نقل {removed} ملف/ملفات إلى سلة المحذوفات.")
+                    st.experimental_rerun()
 
-    if do_upload and uploads:
-        # فهرس الملفات الموجودة (اسم -> (حجم, بصمة))
-        existing = {}
-        for n, _, p in list_files(section_slug):
-            try:
-                existing[n] = (os.path.getsize(p), file_sha256(open(p, "rb").read()))
-            except Exception:
-                pass
+    # إدارة سلة المحذوفات
+    with st.expander("🗑️ إدارة سلة المحذوفات لهذا القسم"):
+        trash_files = list_trash(section_slug)
+        if not trash_files:
+            st.info("سلة المحذوفات فارغة.")
+        else:
+            for idx, (name, size, path) in enumerate(trash_files, start=1):
+                c1, c2, c3 = st.columns([4,1,1])
+                with c1:
+                    st.markdown(f"**#{idx} — {name}**  <span class='code-note'>({human_size(size)})</span>", unsafe_allow_html=True)
+                with c2:
+                    if st.button("استرجاع", key=f"restore_{section_slug}_{idx}"):
+                        try:
+                            restore_from_trash(section_slug, path)
+                            st.success("تم الاسترجاع.")
+                            st.experimental_rerun()
+                        except Exception as e:
+                            st.error(f"تعذّر الاسترجاع: {e}")
+                with c3:
+                    if st.button("حذف نهائي", key=f"purge_{section_slug}_{idx}"):
+                        try:
+                            delete_forever(path)
+                            st.success("تم الحذف النهائي.")
+                            st.experimental_rerun()
+                        except Exception as e:
+                            st.error(f"تعذّر الحذف النهائي: {e}")
+else:
+    st.info("أدخل كلمة المرور ثم اضغط (دخول) للوصول إلى أدوات الرفع والحذف.")
 
-        saved, skipped, oversized = 0, 0, 0
-
-        for f in uploads:
-            data = f.read()
-
-            # 1) تحقق الحجم
-            if len(data) > MAX_BYTES:
-                oversized += 1
-                st.error(f"❌ الملف **{f.name}** يتجاوز حد {MAX_MB}MB — لم يتم الحفظ.")
-                continue
-
-            # 2) بصمة المحتوى لمنع أي تكرار فعلي
-            new_hash = file_sha256(data)
-
-            # 3) هل يوجد ملف بنفس الاسم والحجم والبصمة؟ → تخطٍ
-            same_exists = False
-            if f.name in existing:
-                size0, h0 = existing[f.name]
-                if size0 == len(data) and h0 == new_hash:
-                    same_exists = True
-
-            if same_exists:
-                skipped += 1
-                continue
-
-            # 4) تجهيز مسار الحفظ (اسم فريد عند التعارض)
-            ensure_dir(section_dir)
-            dest = os.path.join(section_dir, f.name)
-            if os.path.exists(dest):
-                base, ext = os.path.splitext(f.name)
-                dest = os.path.join(section_dir, f"{base}_{datetime.now().strftime('%Y%m%d-%H%M%S')}{ext}")
-
-            # 5) حفظ ذري (atomic) بقدر الإمكان
-            tmp_path = dest + ".part"
-            with open(tmp_path, "wb") as fh:
-                fh.write(data)
-            os.replace(tmp_path, dest)  # يستبدل إن وُجد بشكل ذري
-            saved += 1
-
-        # 6) رسائل الحالة
-        if saved:
-            st.success(f"👍 تم حفظ {saved} ملف/ملفات بنجاح.")
-        if skipped:
-            st.info(f"ℹ️ تم تخطي {skipped} ملف/ملفات لأنها مطابقة تمامًا لملفات محفوظة.")
-        if oversized:
-            st.warning(f"⚠️ {oversized} ملف/ملفات تم رفضها لأنها أكبر من {MAX_MB}MB.")
-
-        # إعادة تحميل القائمة بعد الحفظ
-        st.experimental_rerun()
-
-# ========================= تذييل =========================
-st.markdown(
-    "<div class='footer'>تصميم وتطوير رئيس مهندسين أقدم <b class='gold'>طارق مجيد الكريمي</b> ©</div>",
-    unsafe_allow_html=True,
-)
-
-# ========================= تذكير Secrets =========================
-"""
-إعدادات Secrets المتوقعة (مثال):
-
-PW_POLICIES   = "policy-2025"
-PW_OBJECTIVES = "obj-2025"
-PW_DOCS       = "docs-2025"
-PW_AUDIT      = "audit-2025"
-PW_AUDITS     = "audits-2025"
-PW_NC         = "nc-2025"
-PW_CAPA       = "capa-2025"
-PW_KB         = "kb-2025"
-PW_REPORTS    = "reports-2025"
-PW_KPI        = "kpi-2025"
-PW_ESIGN      = "esign-2025"
-PW_NOTIFY     = "notify-2025"
-PW_RISKS      = "risks-2025"
-"""
+# توقيع ثابت
+st.markdown("<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>", unsafe_allow_html=True)
