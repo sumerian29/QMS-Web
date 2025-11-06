@@ -8,15 +8,13 @@ import io
 import hashlib
 from datetime import datetime
 from typing import List, Tuple
-
 import streamlit as st
 
 # ==========================
-# ضبط عام
+# إعداد عام
 # ==========================
 st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
 
-# ألوان وتنسيق خفيف
 st.markdown("""
 <style>
   body, .stApp { background-color:#f3f7fb; }
@@ -48,10 +46,9 @@ SECTIONS_AR2EN = {
     "مؤشرات الأداء (KPI)": "kpi",
     "التوقيع الإلكتروني": "esign",
     "الإشعارات": "notify",
-    "المخاطر": "risks",  # جديد
+    "المخاطر": "risks",
 }
 
-# اربط كل slug بمفتاح السر في Secrets
 SECRET_KEYS = {
     "policies": "PW_POLICIES",
     "objectives": "PW_OBJECTIVES",
@@ -65,7 +62,7 @@ SECRET_KEYS = {
     "kpi": "PW_KPI",
     "esign": "PW_ESIGN",
     "notify": "PW_NOTIFY",
-    "risks": "PW_RISKS",  # أضِف هذا في Secrets
+    "risks": "PW_RISKS",
 }
 
 # جذر التخزين
@@ -74,7 +71,7 @@ TRASH_ROOT = os.path.join(BASE_DIR, ".trash")
 
 
 # ==========================
-# أدوات مساعدة
+# دوال مساعدة
 # ==========================
 def ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
@@ -95,14 +92,12 @@ def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 def list_files(slug: str) -> List[Tuple[str, int, str]]:
-    """يعيد قائمة (name, size, path) مرتبة تصاعدياً بالأحدث في الأعلى."""
     root = section_dir(slug)
     files = []
     for nm in os.listdir(root):
         path = os.path.join(root, nm)
         if os.path.isfile(path):
             files.append((nm, os.path.getsize(path), path))
-    # الأحدث أولاً: باستخدام الاسم الذي يحوي الطابع
     files.sort(key=lambda x: x[0], reverse=True)
     return files
 
@@ -110,17 +105,10 @@ def auth_state_key(slug: str) -> str:
     return f"auth_{slug}"
 
 def save_upload(slug: str, up_file) -> str:
-    """
-    يحفظ ملف الرفع بأمان مع:
-    - بصمة SHA لمنع التكرار الحقيقي.
-    - اسم قياسي: HHMMSS-YYYYMMDD_الاسم-الأصلي.ext
-    """
     root = section_dir(slug)
     raw = up_file.read()
     digest = sha256_bytes(raw)
 
-    # إذا ملف مطابق موجود (حسب بصمة) فلا نحفظ
-    # نتحقق عبر ملفات .sha جانب الملف
     for nm in os.listdir(root):
         p = os.path.join(root, nm)
         if p.endswith(".sha") or not os.path.isfile(p):
@@ -130,7 +118,7 @@ def save_upload(slug: str, up_file) -> str:
             try:
                 with open(sha_path, "r", encoding="utf-8") as fh:
                     if fh.read().strip() == digest:
-                        return ""  # مكرر تماماً
+                        return ""  # مكرر
             except:
                 pass
 
@@ -140,11 +128,9 @@ def save_upload(slug: str, up_file) -> str:
     fname = f"{stamp}_{safe_base}{ext}"
     fpath = os.path.join(root, fname)
 
-    # اكتب الملف
     with open(fpath, "wb") as fh:
         fh.write(raw)
 
-    # اكتب بصمة جانبية
     with open(fpath + ".sha", "w", encoding="utf-8") as fh:
         fh.write(digest)
     return fpath
@@ -157,9 +143,7 @@ def move_to_trash(slug: str, src_path: str) -> str:
     name, ext = os.path.splitext(base)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dst = os.path.join(trash_sec, f"{name}__DELETED__{stamp}{ext}")
-    # انقل الملف
     os.replace(src_path, dst)
-    # انقل ملف البصمة إن وُجد
     sha_src = src_path + ".sha"
     if os.path.exists(sha_src):
         os.replace(sha_src, dst + ".sha")
@@ -178,27 +162,23 @@ def list_trash(slug: str) -> List[Tuple[str, int, str]]:
     return files
 
 def restore_from_trash(slug: str, trash_path: str) -> str:
-    """يعيد الملف إلى مجلد القسم ويحذف لاحقًا لاحقة __DELETED__ من الاسم."""
     root = section_dir(slug)
     base = os.path.basename(trash_path)
     name, ext = os.path.splitext(base)
     original = name.split("__DELETED__")[0] + ext
     dst = os.path.join(root, original)
 
-    # لو الاسم موجود، أضف طابع "RESTORED"
     if os.path.exists(dst):
         stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
         dst = os.path.join(root, f"{original[:-len(ext)]}__RESTORED__{stamp}{ext}")
 
     os.replace(trash_path, dst)
-    # أعد بصمة الملف إن وُجدت
     sha_src = trash_path + ".sha"
     if os.path.exists(sha_src):
         os.replace(sha_src, dst + ".sha")
     return dst
 
 def delete_forever(path: str):
-    """حذف نهائي للملف من سلة المحذوفات (وملف البصمة)."""
     try:
         os.remove(path)
     except FileNotFoundError:
@@ -212,7 +192,7 @@ def delete_forever(path: str):
 
 
 # ==========================
-# واجهة الهيرو المختصرة
+# واجهة البداية
 # ==========================
 colL, colC, colR = st.columns([1,2,1])
 with colC:
@@ -235,19 +215,17 @@ st.divider()
 st.sidebar.markdown("### اختر القسم")
 sec_ar = st.sidebar.selectbox("اختر", list(SECTIONS_AR2EN.keys()))
 section_slug = SECTIONS_AR2EN[sec_ar]
-
-# التحقق من كلمة المرور من Secrets
 sec_key = SECRET_KEYS.get(section_slug, "")
 section_password = st.secrets.get(sec_key, "") if sec_key else ""
 
 
 # ==========================
-# عرض الملفات (قراءة فقط)
+# عرض الملفات الحالية
 # ==========================
 st.markdown("### الملفات الحالية (قراءة فقط) 🔐")
 files = list_files(section_slug)
 if not files:
-    st.info("لا توجد ملفات بعد في هذا القسم. استخدم لوحة التحكم لرفع الملفات بعد إدخال كلمة المرور الصحيحة.")
+    st.info("لا توجد ملفات بعد في هذا القسم.")
 else:
     for idx, (name, size, path) in enumerate(files, start=1):
         c1, c2, c3 = st.columns([4,1,1])
@@ -261,19 +239,15 @@ else:
                 if st.button("حذف", type="primary", key=f"rm_{section_slug}_{idx}"):
                     st.warning(f"سيتم نقل الملف **{name}** إلى سلة المحذوفات.")
                     if st.button(f"تأكيد حذف #{idx}", key=f"rm_cf_{section_slug}_{idx}"):
-                        try:
-                            move_to_trash(section_slug, path)
-                            st.success("تم نقل الملف إلى سلة المحذوفات.")
-                            st.experimental_rerun()
-                        except Exception as e:
-                            st.error(f"تعذّر الحذف: {e}")
+                        move_to_trash(section_slug, path)
+                        st.success("تم نقل الملف إلى سلة المحذوفات.")
+                        st.rerun()
 
 # ==========================
-# لوحة التحكم (تتطلب كلمة مرور)
+# لوحة التحكم
 # ==========================
 st.markdown("### لوحة التحكم (تتطلب كلمة مرور القسم) 🔒")
 
-# إدخال كلمة المرور + زر دخول
 pw_col, btn_col = st.columns([3,1])
 entered = pw_col.text_input("أدخل كلمة المرور", type="password", placeholder="مثال: policy-2025")
 login = btn_col.button("دخول")
@@ -281,28 +255,22 @@ login = btn_col.button("دخول")
 if login:
     if entered and section_password and entered.strip() == section_password.strip():
         st.session_state[auth_state_key(section_slug)] = True
-        st.success("تم الدخول بنجاح. يمكنك الآن رفع الملفات أو إدارة سلة المحذوفات.")
+        st.success("تم الدخول بنجاح.")
     else:
         st.error("كلمة المرور غير صحيحة.")
 
-# إذا مُصادق
 if st.session_state.get(auth_state_key(section_slug), False):
 
-    # رفع ملفات
     st.markdown("#### رفع ملف إلى هذا القسم")
     up = st.file_uploader("اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None)
     if up is not None:
-        try:
-            saved = save_upload(section_slug, up)
-            if saved == "":
-                st.warning("تم تجاهل الرفع: هذا الملف مُكرر تمامًا (نفس البصمة).")
-            else:
-                st.success("تم الحفظ بنجاح.")
-                st.experimental_rerun()
-        except Exception as e:
-            st.error(f"تعذّر الحفظ: {e}")
+        saved = save_upload(section_slug, up)
+        if saved == "":
+            st.warning("تم تجاهل الرفع: الملف مكرر تمامًا.")
+        else:
+            st.success("تم الحفظ بنجاح.")
+            st.rerun()
 
-    # حذف جماعي
     cur_files = list_files(section_slug)
     if cur_files:
         st.markdown("#### حذف جماعي (نقل إلى سلة المحذوفات)")
@@ -317,17 +285,12 @@ if st.session_state.get(auth_state_key(section_slug), False):
                 idx_to_path = {i+1: p for i, (_, _, p) in enumerate(cur_files)}
                 removed = 0
                 for token in sel:
-                    try:
-                        num = int(token.split("—")[0].strip().lstrip("#"))
-                        move_to_trash(section_slug, idx_to_path[num])
-                        removed += 1
-                    except Exception as e:
-                        st.error(f"فشل حذف {token}: {e}")
-                if removed:
-                    st.success(f"تم نقل {removed} ملف/ملفات إلى سلة المحذوفات.")
-                    st.experimental_rerun()
+                    num = int(token.split("—")[0].strip().lstrip("#"))
+                    move_to_trash(section_slug, idx_to_path[num])
+                    removed += 1
+                st.success(f"تم نقل {removed} ملف/ملفات إلى سلة المحذوفات.")
+                st.rerun()
 
-    # إدارة سلة المحذوفات
     with st.expander("🗑️ إدارة سلة المحذوفات لهذا القسم"):
         trash_files = list_trash(section_slug)
         if not trash_files:
@@ -339,22 +302,15 @@ if st.session_state.get(auth_state_key(section_slug), False):
                     st.markdown(f"**#{idx} — {name}**  <span class='code-note'>({human_size(size)})</span>", unsafe_allow_html=True)
                 with c2:
                     if st.button("استرجاع", key=f"restore_{section_slug}_{idx}"):
-                        try:
-                            restore_from_trash(section_slug, path)
-                            st.success("تم الاسترجاع.")
-                            st.experimental_rerun()
-                        except Exception as e:
-                            st.error(f"تعذّر الاسترجاع: {e}")
+                        restore_from_trash(section_slug, path)
+                        st.success("تم الاسترجاع.")
+                        st.rerun()
                 with c3:
                     if st.button("حذف نهائي", key=f"purge_{section_slug}_{idx}"):
-                        try:
-                            delete_forever(path)
-                            st.success("تم الحذف النهائي.")
-                            st.experimental_rerun()
-                        except Exception as e:
-                            st.error(f"تعذّر الحذف النهائي: {e}")
+                        delete_forever(path)
+                        st.success("تم الحذف النهائي.")
+                        st.rerun()
 else:
     st.info("أدخل كلمة المرور ثم اضغط (دخول) للوصول إلى أدوات الرفع والحذف.")
 
-# توقيع ثابت
 st.markdown("<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>", unsafe_allow_html=True)
