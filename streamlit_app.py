@@ -69,18 +69,17 @@ st.markdown("<div class='hero-wrap'>", unsafe_allow_html=True)
 colA, colB, colC = st.columns([1,3,1])
 with colB:
     # ملاحظة: نعرض الشعار من الملف المحلي sold.png
-logo_src = inline_logo_src(LOGO_PATH)
-st.markdown(f"""
-<div class='hero-grid'>
-  <img class='logo' src="{logo_src}">
-  <div class='ttl'>
-    <h1>IMS — Integrated Management System</h1>
-    <h2>شركة نفط ذي قار</h2>
-    <h3>شعبة الجودة وتقويم الأداء المؤسسي</h3>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
+    logo_src = inline_logo_src(LOGO_PATH)
+    st.markdown(f"""
+    <div class='hero-grid'>
+      <img class='logo' src="{logo_src}">
+      <div class='ttl'>
+        <h1>IMS — Integrated Management System</h1>
+        <h2>شركة نفط ذي قار</h2>
+        <h3>شعبة الجودة وتقويم الأداء المؤسسي</h3>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 st.markdown("""
 <div class='card' style='text-align:center'>
 يُعَد حصول شركة نفط ذي قار على شهادة الاعتماد الدولي <b>ISO 9001:2015</b> من مؤسسة <b>Bureau Veritas</b>
@@ -423,4 +422,5 @@ else:
     st.info("أدخل كلمة المرور ثم اضغط (دخول) للوصول إلى أدوات الرفع والحذف.")
 
 st.markdown("<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>", unsafe_allow_html=True)
+
 
