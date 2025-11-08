@@ -48,28 +48,38 @@ st.markdown("""
 # ====== Header / Hero ======
 CERT_PATH = "iso_cert.jpg"  # ضع صورة الشهادة بهذا الاسم بجانب الملف
 LOGO_PATH = "sold.png"      # شعار الشركة باسم sold.png
+import base64
+
+@st.cache_data
+def inline_logo_src(path="sold.png"):
+    try:
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:image/png;base64,{b64}"
+    except Exception:
+        gh_owner = st.secrets.get("GH_OWNER", "")
+        gh_repo  = st.secrets.get("GH_REPO", "")
+        # في حال لم يجد الشعار محليًا، يحاول جلبه من GitHub
+        if gh_owner and gh_repo:
+            return f"https://raw.githubusercontent.com/{gh_owner}/{gh_repo}/main/{path}"
+        # شعار بديل احتياطي
+        return "https://raw.githubusercontent.com/nyxb/placeholder-assets/main/toc-logo.png"
 
 st.markdown("<div class='hero-wrap'>", unsafe_allow_html=True)
 colA, colB, colC = st.columns([1,3,1])
 with colB:
     # ملاحظة: نعرض الشعار من الملف المحلي sold.png
-    st.markdown(f"""
-    <div class='hero-grid'>
-      <img class='logo' src='{LOGO_PATH}' onerror="this.style.display='none'">
-      <div class='ttl'>
-        <h1>IMS — Integrated Management System</h1>
-        <h2>شركة نفط ذي قار</h2>
-        <h3>شعبة الجودة وتقويم الأداء المؤسسي</h3>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown(
-    "<div class='gold'>CERTIFIED ISO 9001:2015 — Bureau Veritas · "
-    "Quality Management System — UKAS Accredited</div>",
-    unsafe_allow_html=True
-)
+logo_src = inline_logo_src(LOGO_PATH)
+st.markdown(f"""
+<div class='hero-grid'>
+  <img class='logo' src="{logo_src}">
+  <div class='ttl'>
+    <h1>IMS — Integrated Management System</h1>
+    <h2>شركة نفط ذي قار</h2>
+    <h3>شعبة الجودة وتقويم الأداء المؤسسي</h3>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 st.markdown("""
 <div class='card' style='text-align:center'>
@@ -413,3 +423,4 @@ else:
     st.info("أدخل كلمة المرور ثم اضغط (دخول) للوصول إلى أدوات الرفع والحذف.")
 
 st.markdown("<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>", unsafe_allow_html=True)
+
