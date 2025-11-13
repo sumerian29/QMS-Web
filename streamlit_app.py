@@ -15,71 +15,6 @@ import streamlit as st
 # ================= App setup =================
 st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
 
-# ================== Users & Login ============
-
-# هنا تعرّف كل موظف وكلمة مروره والأقسام التي يُسمح له بالعمل عليها
-USERS = {
-    "quality_admin": {
-        "password": "QA-2025",
-        "sections": [
-            "policies", "objectives", "docs", "audit-plan", "audits",
-            "nc", "capa", "kb", "reports", "kpi", "esign", "notify", "risks"
-        ],
-    },
-    "policies_user": {
-        "password": "POL-2025",
-        "sections": ["policies"],
-    },
-    "objectives_user": {
-        "password": "OBJ-2025",
-        "sections": ["objectives", "kpi"],
-    },
-    "nc_user": {
-        "password": "NC-2025",
-        "sections": ["nc", "capa"],
-    },
-    # أضف هنا بقية الموظفين حسب اختصاصهم...
-}
-
-
-def require_login():
-    """نموذج تسجيل الدخول – يظهر في الـ sidebar، ولا يسمح بمتابعة الكود قبل نجاح الدخول."""
-    if "user" not in st.session_state:
-        st.session_state.user = None
-        st.session_state.allowed_sections = []
-
-    with st.sidebar:
-        st.markdown("### 🔑 تسجيل الدخول إلى نظام IMS")
-
-        # إذا لم يُسجَّل الدخول بعد
-        if st.session_state.user is None:
-            username = st.text_input("اسم المستخدم")
-            password = st.text_input("كلمة المرور", type="password")
-            login_btn = st.button("دخول", key="login_btn")
-
-            if login_btn:
-                user = USERS.get(username)
-                if user and user["password"] == password:
-                    st.session_state.user = username
-                    st.session_state.allowed_sections = user["sections"]
-                    st.success(f"تم تسجيل الدخول: {username}")
-                    st.experimental_rerun()
-                else:
-                    st.error("اسم المستخدم أو كلمة المرور غير صحيحة.")
-                    st.stop()
-            else:
-                st.stop()
-        else:
-            st.info(f"المستخدم الحالي: **{st.session_state.user}**")
-            if st.button("تسجيل الخروج", key="logout_btn"):
-                st.session_state.user = None
-                st.session_state.allowed_sections = []
-                st.experimental_rerun()
-
-
-# استدعاء تسجيل الدخول في بداية التطبيق
-require_login()
-
 # ================= Styling ===================
 st.markdown(
     """
@@ -115,7 +50,6 @@ st.markdown(
 CERT_PATH = "iso_cert.jpg"   # ضع الصورة بهذا الاسم بجانب الملف لعرض شهادة ISO
 LOGO_PATH = "sold.png"       # شعار الشركة محليًا باسم sold.png
 
-
 @st.cache_data
 def inline_logo_src(path: str = "sold.png") -> str:
     """
@@ -129,11 +63,10 @@ def inline_logo_src(path: str = "sold.png") -> str:
             return f"data:image/png;base64,{b64}"
     except Exception:
         gh_owner = st.secrets.get("GH_OWNER", "")
-        gh_repo = st.secrets.get("GH_REPO", "")
+        gh_repo  = st.secrets.get("GH_REPO", "")
         if gh_owner and gh_repo:
             return f"https://raw.githubusercontent.com/{gh_owner}/{gh_repo}/main/{path}"
         return "https://raw.githubusercontent.com/nyxb/placeholder-assets/main/toc-logo.png"
-
 
 st.markdown("<div class='hero-wrap'>", unsafe_allow_html=True)
 colA, colB, colC = st.columns([1, 3, 1])
@@ -214,19 +147,16 @@ SECRET_KEYS = {
     "risks": "PW_RISKS",
 }
 
-BASE_DIR = os.path.join(os.getcwd(), "uploads")
+BASE_DIR   = os.path.join(os.getcwd(), "uploads")
 TRASH_ROOT = os.path.join(BASE_DIR, ".trash")
-
 
 def ensure_dir(p: str) -> None:
     os.makedirs(p, exist_ok=True)
-
 
 def section_dir(slug: str) -> str:
     p = os.path.join(BASE_DIR, slug)
     ensure_dir(p)
     return p
-
 
 def human_size(n: int) -> str:
     for u in ["B", "KB", "MB", "GB"]:
@@ -235,10 +165,8 @@ def human_size(n: int) -> str:
         n /= 1024
     return f"{n:.1f} TB"
 
-
 def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
-
 
 def list_files(slug: str) -> List[Tuple[str, int, str]]:
     root = section_dir(slug)
@@ -250,10 +178,8 @@ def list_files(slug: str) -> List[Tuple[str, int, str]]:
     out.sort(key=lambda x: x[0], reverse=True)
     return out
 
-
 def auth_key(slug: str) -> str:
     return f"auth_{slug}"
-
 
 # ---------- حفظ الرفع مع منع التكرار ورسائل واضحة ----------
 def save_upload(slug: str, up):
@@ -294,7 +220,6 @@ def save_upload(slug: str, up):
     except Exception as e:
         return f"__ERROR__:{e}"
 
-
 def move_to_trash(slug: str, src: str) -> str:
     ensure_dir(TRASH_ROOT)
     tdir = os.path.join(TRASH_ROOT, slug)
@@ -308,7 +233,6 @@ def move_to_trash(slug: str, src: str) -> str:
         os.replace(src + ".sha", dst + ".sha")
     return dst
 
-
 def list_trash(slug: str) -> List[Tuple[str, int, str]]:
     tdir = os.path.join(TRASH_ROOT, slug)
     if not os.path.isdir(tdir):
@@ -320,7 +244,6 @@ def list_trash(slug: str) -> List[Tuple[str, int, str]]:
             out.append((nm, os.path.getsize(p), p))
     out.sort(key=lambda x: x[0], reverse=True)
     return out
-
 
 def restore_from_trash(slug: str, tpath: str) -> str:
     root = section_dir(slug)
@@ -336,7 +259,6 @@ def restore_from_trash(slug: str, tpath: str) -> str:
         os.replace(tpath + ".sha", dst + ".sha")
     return dst
 
-
 def delete_forever(p: str):
     try:
         os.remove(p)
@@ -347,31 +269,30 @@ def delete_forever(p: str):
     except FileNotFoundError:
         pass
 
-
-# ================= Sidebar – sections per user ===============
+# ================= Sidebar ===================
 
 st.sidebar.markdown("### اختر القسم")
-
-# الأقسام المسموح بها للمستخدم الحالي فقط
-allowed = st.session_state.get("allowed_sections", [])
-
-# نبني قائمة الخيارات بالعربي لكن فقط للأقسام المسموح بها
-available_pairs = [
-    (ar, en) for ar, en in SECTIONS_AR2EN.items() if (not allowed or en in allowed)
-]
-
-if not available_pairs:
-    st.sidebar.error("لا توجد أقسام مخصصة لهذا المستخدم. راجع مسؤول النظام.")
-    st.stop()
-
-labels = [ar for (ar, _) in available_pairs]
-sec_ar = st.sidebar.selectbox("اختر", labels)
-slug = dict(available_pairs)[sec_ar]
-
+sec_ar = st.sidebar.selectbox("اختر", list(SECTIONS_AR2EN.keys()))
+slug = SECTIONS_AR2EN[sec_ar]
 sec_secret = st.secrets.get(SECRET_KEYS.get(slug, ""), "")
 
+# إدخال كلمة مرور القسم في الـ Sidebar
+st.sidebar.markdown("### صلاحيات القسم")
+pw = st.sidebar.text_input(
+    "كلمة مرور هذا القسم (للرفع/الحذف فقط)", 
+    type="password", 
+    key=f"pw_{slug}"
+)
+if st.sidebar.button("دخول", key=f"enter_{slug}"):
+    if pw and sec_secret and pw.strip() == sec_secret.strip():
+        st.session_state[auth_key(slug)] = True
+        st.sidebar.success("تم التحقق من كلمة المرور.")
+    else:
+        st.sidebar.error("كلمة المرور غير صحيحة.")
+
 # ================= Files (read-only) =========
-st.markdown("### الملفات الحالية (قراءة فقط) 🔐")
+
+st.markdown("### الملفات الحالية (متاحة للجميع للقراءة فقط) 📂")
 files = list_files(slug)
 if not files:
     st.info("لا توجد ملفات بعد في هذا القسم.")
@@ -395,26 +316,19 @@ else:
             except Exception as e:
                 st.caption(f"تعذّر فتح الملف للتنزيل: {e}")
         with c3:
+            # زر الحذف الفردي يظهر فقط إذا تم إدخال كلمة المرور الصحيحة
             if st.session_state.get(auth_key(slug), False):
                 if st.button("حذف", key=f"rm_{slug}_{i}"):
                     try:
                         move_to_trash(slug, pth)
                         st.success("تم نقل الملف إلى سلة المحذوفات.")
-                        st.experimental_rerun()
+                        st.rerun(); st.stop()
                     except Exception as e:
                         st.error(f"تعذر الحذف: {e}")
 
 # ================= Control Panel =============
 
-st.markdown("### لوحة التحكم (تتطلب كلمة مرور القسم) 🔒")
-c_pw, c_btn = st.columns([3, 1])
-pw = c_pw.text_input("أدخل كلمة المرور", type="password", placeholder="مثال: policy-2025")
-if c_btn.button("دخول", key="enter_section"):
-    if pw and sec_secret and pw.strip() == sec_secret.strip():
-        st.session_state[auth_key(slug)] = True
-        st.success("تم الدخول بنجاح.")
-    else:
-        st.error("كلمة المرور غير صحيحة.")
+st.markdown("### لوحة التحكم (خاصة بحامل كلمة المرور) 🔒")
 
 if st.session_state.get(auth_key(slug), False):
     st.markdown("#### رفع ملف إلى هذا القسم")
@@ -429,15 +343,15 @@ if st.session_state.get(auth_key(slug), False):
             st.error("تعذّر حفظ الملف: " + res.replace("__ERROR__:", ""))
         else:
             st.success("تم الحفظ بنجاح.")
-            st.experimental_rerun()
+            st.rerun(); st.stop()
 
     cur = list_files(slug)
     if cur:
         st.markdown("#### حذف جماعي (نقل إلى سلة المحذوفات)")
-        labels2 = [f"#{i} — {nm}" for i, (nm, _, _) in enumerate(cur, start=1)]
-        label_to_path = {labels2[i]: cur[i][2] for i in range(len(cur))}
-        chosen = st.multiselect("اختر الملفات:", options=labels2)
-        if st.button("حذف الملفات المحددة", key="del_multi"):
+        labels = [f"#{i} — {nm}" for i, (nm, _, _) in enumerate(cur, start=1)]
+        label_to_path = {labels[i]: cur[i][2] for i in range(len(cur))}
+        chosen = st.multiselect("اختر الملفات:", options=labels)
+        if st.button("حذف الملفات المحددة"):
             if not chosen:
                 st.info("لم يتم اختيار أي ملف.")
             else:
@@ -448,7 +362,7 @@ if st.session_state.get(auth_key(slug), False):
                         move_to_trash(slug, p)
                         cnt += 1
                 st.success(f"تم نقل {cnt} ملف/ملفات إلى سلة المحذوفات.")
-                st.experimental_rerun()
+                st.rerun(); st.stop()
 
     with st.expander("🗑️ إدارة سلة المحذوفات لهذا القسم"):
         trash = list_trash(slug)
@@ -466,14 +380,14 @@ if st.session_state.get(auth_key(slug), False):
                     if st.button("استرجاع", key=f"restore_{slug}_{i}"):
                         restore_from_trash(slug, pth)
                         st.success("تم الاسترجاع.")
-                        st.experimental_rerun()
+                        st.rerun(); st.stop()
                 with c3:
                     if st.button("حذف نهائي", key=f"purge_{slug}_{i}"):
                         delete_forever(pth)
                         st.success("تم الحذف النهائي.")
-                        st.experimental_rerun()
+                        st.rerun(); st.stop()
 else:
-    st.info("أدخل كلمة المرور ثم اضغط (دخول) للوصول إلى أدوات الرفع والحذف.")
+    st.info("للوصول إلى أدوات الرفع والحذف، أدخل كلمة مرور القسم من القائمة الجانبية.")
 
 st.markdown(
     "<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>",
