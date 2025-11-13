@@ -6,14 +6,39 @@
 
 import os
 import base64
-import hashlib
 from datetime import datetime
 from typing import List, Tuple
 
+import requests
 import streamlit as st
 
 # ================= App setup =================
 st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
+
+# ================= GitHub Config =============
+
+# يجب ضبط هذه القيم في Streamlit secrets
+GH_TOKEN = st.secrets.get("GH_TOKEN", "")
+GH_OWNER = st.secrets.get("GH_OWNER", "")
+GH_REPO  = st.secrets.get("GH_REPO", "")
+
+# فرع الريبو (غالباً main) ومسار الجذر للملفات داخل الريبو
+GH_BRANCH    = st.secrets.get("GH_BRANCH", "main")
+GH_BASE_PATH = st.secrets.get("GH_BASE_PATH", "qms")
+
+if not GH_TOKEN or not GH_OWNER or not GH_REPO:
+    st.error("⚠️ لم يتم ضبط GH_TOKEN / GH_OWNER / GH_REPO في Streamlit Secrets.")
+    st.stop()
+
+def github_headers():
+    return {
+        "Authorization": f"Bearer {GH_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+
+def github_contents_url(path: str) -> str:
+    # path مثل "qms/policies"
+    return f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{path}"
 
 # ================= Styling ===================
 st.markdown(
@@ -54,7 +79,7 @@ LOGO_PATH = "sold.png"       # شعار الشركة محليًا باسم sold.
 def inline_logo_src(path: str = "sold.png") -> str:
     """
     يعيد Data URI للصورة من الملف المحلي إن وجد،
-    وإلا يحاول جلبه من GitHub Secrets إن وُضعت (GH_OWNER/GH_REPO),
+    وإلا يحاول جلبه من GitHub (raw),
     وإلا يسقط إلى صورة بديلة عامة.
     """
     try:
@@ -62,11 +87,8 @@ def inline_logo_src(path: str = "sold.png") -> str:
             b64 = base64.b64encode(f.read()).decode("utf-8")
             return f"data:image/png;base64,{b64}"
     except Exception:
-        gh_owner = st.secrets.get("GH_OWNER", "")
-        gh_repo  = st.secrets.get("GH_REPO", "")
-        if gh_owner and gh_repo:
-            return f"https://raw.githubusercontent.com/{gh_owner}/{gh_repo}/main/{path}"
-        return "https://raw.githubusercontent.com/nyxb/placeholder-assets/main/toc-logo.png"
+        # محاولة جلبه من الريبو نفسه لو مرفوع هناك
+        return f"https://raw.githubusercontent.com/{GH_OWNER}/{GH_REPO}/{GH_BRANCH}/{path}"
 
 st.markdown("<div class='hero-wrap'>", unsafe_allow_html=True)
 colA, colB, colC = st.columns([1, 3, 1])
@@ -147,16 +169,10 @@ SECRET_KEYS = {
     "risks": "PW_RISKS",
 }
 
-BASE_DIR   = os.path.join(os.getcwd(), "uploads")
-TRASH_ROOT = os.path.join(BASE_DIR, ".trash")
-
-def ensure_dir(p: str) -> None:
-    os.makedirs(p, exist_ok=True)
-
-def section_dir(slug: str) -> str:
-    p = os.path.join(BASE_DIR, slug)
-    ensure_dir(p)
-    return p
+# مسار كل قسم داخل الريبو: qms/<slug> افتراضيًا
+SECTION_PATHS = {
+    slug: f"{GH_BASE_PATH}/{slug}" for slug in SECTIONS_AR2EN.values()
+}
 
 def human_size(n: int) -> str:
     for u in ["B", "KB", "MB", "GB"]:
@@ -165,42 +181,48 @@ def human_size(n: int) -> str:
         n /= 1024
     return f"{n:.1f} TB"
 
-def sha256_bytes(b: bytes) -> str:
-    return hashlib.sha256(b).hexdigest()
-
-def list_files(slug: str) -> List[Tuple[str, int, str]]:
-    root = section_dir(slug)
-    out: List[Tuple[str, int, str]] = []
-    for nm in os.listdir(root):
-        p = os.path.join(root, nm)
-        if os.path.isfile(p) and not nm.endswith(".sha"):
-            out.append((nm, os.path.getsize(p), p))
-    out.sort(key=lambda x: x[0], reverse=True)
-    return out
-
 def auth_key(slug: str) -> str:
     return f"auth_{slug}"
 
-# ---------- حفظ الرفع مع منع التكرار ورسائل واضحة ----------
+# ============ GitHub-based storage functions ============
+
+def list_files(slug: str) -> List[Tuple[str, int, str]]:
+    """
+    تعيد قائمة ملفات القسم من GitHub:
+    (اسم الملف، الحجم، رابط التحميل download_url)
+    """
+    folder = SECTION_PATHS.get(slug, f"{GH_BASE_PATH}/{slug}")
+    url = github_contents_url(folder)
+
+    resp = requests.get(url, headers=github_headers())
+    if resp.status_code != 200:
+        # لو لم يوجد المجلد أصلاً نرجع قائمة فارغة
+        return []
+
+    items = resp.json()
+    out: List[Tuple[str, int, str]] = []
+
+    # GitHub يعيد ملفات ومجلدات؛ نأخذ الملفات فقط
+    for it in items:
+        if it.get("type") == "file":
+            name = it["name"]
+            size = it.get("size", 0)
+            download_url = it.get("download_url")
+            out.append((name, size, download_url))
+
+    out.sort(key=lambda x: x[0], reverse=True)
+    return out
+
+
 def save_upload(slug: str, up):
-    ensure_dir(section_dir(slug))
+    """
+    حفظ الملف المرفوع داخل مجلد القسم في GitHub.
+    ينشئ المجلدات تلقائيًا إذا لم تكن موجودة.
+    """
     try:
         up.seek(0)
         raw = up.getbuffer() if hasattr(up, "getbuffer") else up.read()
         raw = bytes(raw)
-        digest = sha256_bytes(raw)
-
-        root = section_dir(slug)
-        for nm in os.listdir(root):
-            p = os.path.join(root, nm)
-            if os.path.isfile(p) and not nm.endswith(".sha"):
-                sp = p + ".sha"
-                if os.path.exists(sp):
-                    try:
-                        if open(sp, "r", encoding="utf-8").read().strip() == digest:
-                            return ""  # مكرر
-                    except Exception:
-                        pass
 
         stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
         base, ext = os.path.splitext(up.name or "file")
@@ -209,185 +231,99 @@ def save_upload(slug: str, up):
         )
         safe = "_".join(safe.split())
         fname = f"{stamp}_{safe}{ext.lower()}"
-        fpath = os.path.join(root, fname)
 
-        with open(fpath, "wb") as f:
-            f.write(raw)
-        with open(fpath + ".sha", "w", encoding="utf-8") as f:
-            f.write(digest)
-        return fpath
+        folder = SECTION_PATHS.get(slug, f"{GH_BASE_PATH}/{slug}")
+        repo_path = f"{folder}/{fname}"
+
+        content_b64 = base64.b64encode(raw).decode("utf-8")
+
+        url = github_contents_url(repo_path)
+        data = {
+            "message": f"Add {fname} to {slug} via IMS",
+            "content": content_b64,
+            "branch": GH_BRANCH,
+        }
+
+        resp = requests.put(url, json=data, headers=github_headers())
+        if resp.status_code in (201, 200):
+            return repo_path
+        else:
+            return "__ERROR__:" + f"GitHub {resp.status_code}: {resp.text}"
 
     except Exception as e:
-        return f"__ERROR__:{e}"
+        return "__ERROR__:" + str(e)
 
-def move_to_trash(slug: str, src: str) -> str:
-    ensure_dir(TRASH_ROOT)
-    tdir = os.path.join(TRASH_ROOT, slug)
-    ensure_dir(tdir)
-    base = os.path.basename(src)
-    name, ext = os.path.splitext(base)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dst = os.path.join(tdir, f"{name}__DELETED__{stamp}{ext}")
-    os.replace(src, dst)
-    if os.path.exists(src + ".sha"):
-        os.replace(src + ".sha", dst + ".sha")
-    return dst
-
-def list_trash(slug: str) -> List[Tuple[str, int, str]]:
-    tdir = os.path.join(TRASH_ROOT, slug)
-    if not os.path.isdir(tdir):
-        return []
-    out: List[Tuple[str, int, str]] = []
-    for nm in os.listdir(tdir):
-        p = os.path.join(tdir, nm)
-        if os.path.isfile(p) and not nm.endswith(".sha"):
-            out.append((nm, os.path.getsize(p), p))
-    out.sort(key=lambda x: x[0], reverse=True)
-    return out
-
-def restore_from_trash(slug: str, tpath: str) -> str:
-    root = section_dir(slug)
-    base = os.path.basename(tpath)
-    name, ext = os.path.splitext(base)
-    original = name.split("__DELETED__")[0] + ext
-    dst = os.path.join(root, original)
-    if os.path.exists(dst):
-        stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
-        dst = os.path.join(root, f"{original[:-len(ext)]}__RESTORED__{stamp}{ext}")
-    os.replace(tpath, dst)
-    if os.path.exists(tpath + ".sha"):
-        os.replace(tpath + ".sha", dst + ".sha")
-    return dst
-
-def delete_forever(p: str):
-    try:
-        os.remove(p)
-    except FileNotFoundError:
-        pass
-    try:
-        os.remove(p + ".sha")
-    except FileNotFoundError:
-        pass
-
-# ================= Sidebar ===================
+# ================= Sidebar: اختيار القسم + كلمة المرور =========
 
 st.sidebar.markdown("### اختر القسم")
 sec_ar = st.sidebar.selectbox("اختر", list(SECTIONS_AR2EN.keys()))
 slug = SECTIONS_AR2EN[sec_ar]
 sec_secret = st.secrets.get(SECRET_KEYS.get(slug, ""), "")
 
-# إدخال كلمة مرور القسم في الـ Sidebar
 st.sidebar.markdown("### صلاحيات القسم")
 pw = st.sidebar.text_input(
-    "كلمة مرور هذا القسم (للرفع/الحذف فقط)", 
-    type="password", 
-    key=f"pw_{slug}"
+    "كلمة المرور (للرفع فقط)",
+    type="password",
+    key=f"pw_{slug}",
 )
 if st.sidebar.button("دخول", key=f"enter_{slug}"):
     if pw and sec_secret and pw.strip() == sec_secret.strip():
         st.session_state[auth_key(slug)] = True
         st.sidebar.success("تم التحقق من كلمة المرور.")
     else:
+        st.session_state[auth_key(slug)] = False
         st.sidebar.error("كلمة المرور غير صحيحة.")
 
-# ================= Files (read-only) =========
+# ================= Files (قراءة للجميع) =========
 
-st.markdown("### الملفات الحالية (متاحة للجميع للقراءة فقط) 📂")
+st.markdown("### الملفات الحالية (متاحة للقراءة والتحميل للجميع) 📂")
 files = list_files(slug)
 if not files:
     st.info("لا توجد ملفات بعد في هذا القسم.")
 else:
-    for i, (nm, sz, pth) in enumerate(files, start=1):
-        c1, c2, c3 = st.columns([4, 1, 1])
+    for i, (nm, sz, download_url) in enumerate(files, start=1):
+        c1, c2 = st.columns([5, 2])
         with c1:
             st.markdown(
                 f"**#{i} — {nm}**  <span class='muted'>({human_size(sz)})</span>",
                 unsafe_allow_html=True,
             )
         with c2:
-            try:
-                with open(pth, "rb") as fh:
-                    st.download_button(
-                        "تنزيل",
-                        data=fh.read(),
-                        file_name=nm,
-                        key=f"dl_{slug}_{i}",
-                    )
-            except Exception as e:
-                st.caption(f"تعذّر فتح الملف للتنزيل: {e}")
-        with c3:
-            # زر الحذف الفردي يظهر فقط إذا تم إدخال كلمة المرور الصحيحة
-            if st.session_state.get(auth_key(slug), False):
-                if st.button("حذف", key=f"rm_{slug}_{i}"):
-                    try:
-                        move_to_trash(slug, pth)
-                        st.success("تم نقل الملف إلى سلة المحذوفات.")
-                        st.rerun(); st.stop()
-                    except Exception as e:
-                        st.error(f"تعذر الحذف: {e}")
+            if download_url:
+                try:
+                    r = requests.get(download_url)
+                    if r.status_code == 200:
+                        st.download_button(
+                            "تنزيل",
+                            data=r.content,
+                            file_name=nm,
+                            key=f"dl_{slug}_{i}",
+                        )
+                    else:
+                        st.caption("تعذّر تحميل الملف من GitHub.")
+                except Exception as e:
+                    st.caption(f"تعذّر تحميل الملف: {e}")
+            else:
+                st.caption("لا يوجد رابط تحميل متاح.")
 
-# ================= Control Panel =============
+# ================= Control Panel (رفع فقط) =============
 
-st.markdown("### لوحة التحكم (خاصة بحامل كلمة المرور) 🔒")
+st.markdown("### لوحة التحكم (رفع الملفات للقسم المحدد) 🔒")
 
 if st.session_state.get(auth_key(slug), False):
-    st.markdown("#### رفع ملف إلى هذا القسم")
+    st.markdown("#### رفع ملف جديد إلى هذا القسم (GitHub)")
     up = st.file_uploader(
         "اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None
     )
     if up is not None:
         res = save_upload(slug, up)
-        if res == "":
-            st.warning("تم تجاهل الرفع: هذا الملف موجود مسبقًا (مكرر).")
-        elif isinstance(res, str) and res.startswith("__ERROR__:"):
+        if isinstance(res, str) and res.startswith("__ERROR__:"):
             st.error("تعذّر حفظ الملف: " + res.replace("__ERROR__:", ""))
         else:
-            st.success("تم الحفظ بنجاح.")
-            st.rerun(); st.stop()
-
-    cur = list_files(slug)
-    if cur:
-        st.markdown("#### حذف جماعي (نقل إلى سلة المحذوفات)")
-        labels = [f"#{i} — {nm}" for i, (nm, _, _) in enumerate(cur, start=1)]
-        label_to_path = {labels[i]: cur[i][2] for i in range(len(cur))}
-        chosen = st.multiselect("اختر الملفات:", options=labels)
-        if st.button("حذف الملفات المحددة"):
-            if not chosen:
-                st.info("لم يتم اختيار أي ملف.")
-            else:
-                cnt = 0
-                for lbl in chosen:
-                    p = label_to_path.get(lbl)
-                    if p and os.path.exists(p):
-                        move_to_trash(slug, p)
-                        cnt += 1
-                st.success(f"تم نقل {cnt} ملف/ملفات إلى سلة المحذوفات.")
-                st.rerun(); st.stop()
-
-    with st.expander("🗑️ إدارة سلة المحذوفات لهذا القسم"):
-        trash = list_trash(slug)
-        if not trash:
-            st.info("سلة المحذوفات فارغة.")
-        else:
-            for i, (nm, sz, pth) in enumerate(trash, start=1):
-                c1, c2, c3 = st.columns([4, 1, 1])
-                with c1:
-                    st.markdown(
-                        f"**#{i} — {nm}**  <span class='muted'>({human_size(sz)})</span>",
-                        unsafe_allow_html=True,
-                    )
-                with c2:
-                    if st.button("استرجاع", key=f"restore_{slug}_{i}"):
-                        restore_from_trash(slug, pth)
-                        st.success("تم الاسترجاع.")
-                        st.rerun(); st.stop()
-                with c3:
-                    if st.button("حذف نهائي", key=f"purge_{slug}_{i}"):
-                        delete_forever(pth)
-                        st.success("تم الحذف النهائي.")
-                        st.rerun(); st.stop()
+            st.success("✅ تم رفع الملف بنجاح إلى GitHub.")
+            st.rerun()
 else:
-    st.info("للوصول إلى أدوات الرفع والحذف، أدخل كلمة مرور القسم من القائمة الجانبية.")
+    st.info("لرفع الملفات في هذا القسم، أدخل كلمة المرور الصحيحة من القائمة الجانبية.")
 
 st.markdown(
     "<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>",
