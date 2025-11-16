@@ -63,7 +63,7 @@ st.markdown(
   .muted{color:#6b7280;font-size:13px}
   .sig{ text-align:center; color:#a07605; font-weight:700; margin:10px 0 0;}
   .cert {max-width:980px;margin:12px auto 6px;border-radius:12px;overflow:hidden;
-         border:1px solid #e6ebf2; background:#fff;}
+         border:1px solid #e9eef5; background:#fff;}
   .cert-caption{max-width:980px;margin:4px auto 18px;text-align:center;color:#6b7280;font-size:13px}
 </style>
 """,
@@ -186,10 +186,10 @@ def auth_key(slug: str) -> str:
 
 # ============ GitHub-based storage functions ============
 
-def list_files(slug: str) -> List[Tuple[str, int, str]]:
+def list_files(slug: str) -> List[Tuple[str, int, str, str, str]]:
     """
     تعيد قائمة ملفات القسم من GitHub:
-    (اسم الملف، الحجم، رابط التحميل download_url)
+    (اسم الملف، الحجم، رابط التحميل download_url، المسار path، رقم sha)
     """
     folder = SECTION_PATHS.get(slug, f"{GH_BASE_PATH}/{slug}")
     url = github_contents_url(folder)
@@ -200,7 +200,7 @@ def list_files(slug: str) -> List[Tuple[str, int, str]]:
         return []
 
     items = resp.json()
-    out: List[Tuple[str, int, str]] = []
+    out: List[Tuple[str, int, str, str, str]] = []
 
     # GitHub يعيد ملفات ومجلدات؛ نأخذ الملفات فقط
     for it in items:
@@ -208,31 +208,69 @@ def list_files(slug: str) -> List[Tuple[str, int, str]]:
             name = it["name"]
             size = it.get("size", 0)
             download_url = it.get("download_url")
-            out.append((name, size, download_url))
+            path = it.get("path")
+            sha = it.get("sha")
+            out.append((name, size, download_url, path, sha))
 
     out.sort(key=lambda x: x[0], reverse=True)
     return out
+
+
+def delete_file_from_github(path: str, sha: str) -> bool:
+    """
+    حذف ملف من GitHub بشكل نهائي باستخدام المسار و sha.
+    """
+    url = github_contents_url(path)
+    data = {
+        "message": f"Delete {path} via IMS",
+        "sha": sha,
+        "branch": GH_BRANCH,
+    }
+    resp = requests.delete(url, headers=github_headers(), json=data)
+    return resp.status_code in (200, 204)
 
 
 def save_upload(slug: str, up):
     """
     حفظ الملف المرفوع داخل مجلد القسم في GitHub.
     ينشئ المجلدات تلقائيًا إذا لم تكن موجودة.
+    ويمنع تكرار نفس اسم الملف (بعد الجزء الزمني).
     """
     try:
         up.seek(0)
         raw = up.getbuffer() if hasattr(up, "getbuffer") else up.read()
         raw = bytes(raw)
 
-        stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
         base, ext = os.path.splitext(up.name or "file")
         safe = "".join(
             ch if (ch.isalnum() or ch in ("_", "-", ".", " ")) else "_" for ch in base
         )
         safe = "_".join(safe.split())
-        fname = f"{stamp}_{safe}{ext.lower()}"
+        ext = ext.lower()
 
         folder = SECTION_PATHS.get(slug, f"{GH_BASE_PATH}/{slug}")
+        target_rest = safe + ext  # الاسم الأصلي + الامتداد
+
+        # --- فحص وجود ملف بنفس الاسم في هذا القسم مسبقاً ---
+        folder_url = github_contents_url(folder)
+        resp = requests.get(folder_url, headers=github_headers())
+        if resp.status_code == 200:
+            items = resp.json()
+            for it in items:
+                if it.get("type") == "file":
+                    existing_name = it["name"]
+                    # نأخذ الجزء بعد أول "_" لأنه يأتي بعد التوقيت
+                    if "_" in existing_name:
+                        existing_rest = existing_name.split("_", 1)[1]
+                    else:
+                        existing_rest = existing_name
+                    if existing_rest == target_rest:
+                        # الملف موجود مسبقاً بنفس الاسم
+                        return "__DUPLICATE__"
+
+        # --- إنشاء اسم جديد مع ختم زمني ثم الرفع إلى GitHub ---
+        stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
+        fname = f"{stamp}_{safe}{ext}"
         repo_path = f"{folder}/{fname}"
 
         content_b64 = base64.b64encode(raw).decode("utf-8")
@@ -281,8 +319,8 @@ files = list_files(slug)
 if not files:
     st.info("لا توجد ملفات بعد في هذا القسم.")
 else:
-    for i, (nm, sz, download_url) in enumerate(files, start=1):
-        c1, c2 = st.columns([5, 2])
+    for i, (nm, sz, download_url, path, sha) in enumerate(files, start=1):
+        c1, c2, c3 = st.columns([5, 2, 1])
         with c1:
             st.markdown(
                 f"**#{i} — {nm}**  <span class='muted'>({human_size(sz)})</span>",
@@ -305,6 +343,15 @@ else:
                     st.caption(f"تعذّر تحميل الملف: {e}")
             else:
                 st.caption("لا يوجد رابط تحميل متاح.")
+        with c3:
+            if st.session_state.get(auth_key(slug), False):
+                if st.button("حذف", key=f"del_{slug}_{i}"):
+                    ok = delete_file_from_github(path, sha)
+                    if ok:
+                        st.success("✅ تم حذف الملف من GitHub.")
+                        st.rerun()
+                    else:
+                        st.error("تعذّر حذف الملف من GitHub.")
 
 # ================= Control Panel (رفع فقط) =============
 
@@ -317,7 +364,12 @@ if st.session_state.get(auth_key(slug), False):
     )
     if up is not None:
         res = save_upload(slug, up)
-        if isinstance(res, str) and res.startswith("__ERROR__:"):
+        if res == "__DUPLICATE__":
+            st.warning(
+                "تم تجاهل الرفع: هذا الملف موجود مسبقًا في هذا القسم بنفس الاسم. "
+                "يرجى تغيير اسم الملف أو حذف النسخة القديمة أولاً."
+            )
+        elif isinstance(res, str) and res.startswith("__ERROR__:"):
             st.error("تعذّر حفظ الملف: " + res.replace("__ERROR__:", ""))
         else:
             st.success("✅ تم رفع الملف بنجاح إلى GitHub.")
