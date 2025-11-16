@@ -30,15 +30,24 @@ if not GH_TOKEN or not GH_OWNER or not GH_REPO:
     st.error("⚠️ لم يتم ضبط GH_TOKEN / GH_OWNER / GH_REPO في Streamlit Secrets.")
     st.stop()
 
+
 def github_headers():
     return {
         "Authorization": f"Bearer {GH_TOKEN}",
         "Accept": "application/vnd.github+json",
     }
 
+
 def github_contents_url(path: str) -> str:
-    # path مثل "qms/policies"
+    # path مثل "qms/policies/public"
     return f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{path}"
+
+
+# دالة تعطي مسار المجلد داخل الريبو حسب القسم ونوع الملفات
+def section_folder(slug: str, visibility: str) -> str:
+    # visibility = "public" أو "private"
+    return f"{GH_BASE_PATH}/{slug}/{visibility}"
+
 
 # ================= Styling ===================
 st.markdown(
@@ -75,6 +84,7 @@ st.markdown(
 CERT_PATH = "iso_cert.jpg"   # ضع الصورة بهذا الاسم بجانب الملف لعرض شهادة ISO
 LOGO_PATH = "sold.png"       # شعار الشركة محليًا باسم sold.png
 
+
 @st.cache_data
 def inline_logo_src(path: str = "sold.png") -> str:
     """
@@ -89,6 +99,7 @@ def inline_logo_src(path: str = "sold.png") -> str:
     except Exception:
         # محاولة جلبه من الريبو نفسه لو مرفوع هناك
         return f"https://raw.githubusercontent.com/{GH_OWNER}/{GH_REPO}/{GH_BRANCH}/{path}"
+
 
 st.markdown("<div class='hero-wrap'>", unsafe_allow_html=True)
 colA, colB, colC = st.columns([1, 3, 1])
@@ -169,10 +180,14 @@ SECRET_KEYS = {
     "risks": "PW_RISKS",
 }
 
-# مسار كل قسم داخل الريبو: qms/<slug> افتراضيًا
-SECTION_PATHS = {
-    slug: f"{GH_BASE_PATH}/{slug}" for slug in SECTIONS_AR2EN.values()
+VISIBILITY_LABELS_PUBLIC_ONLY = {
+    "الملفات العامة (لجميع الموظفين)": "public",
 }
+VISIBILITY_LABELS_FULL = {
+    "الملفات العامة (لجميع الموظفين)": "public",
+    "الملفات الداخلية (الخاصة بمسؤول القسم)": "private",
+}
+
 
 def human_size(n: int) -> str:
     for u in ["B", "KB", "MB", "GB"]:
@@ -181,17 +196,20 @@ def human_size(n: int) -> str:
         n /= 1024
     return f"{n:.1f} TB"
 
+
 def auth_key(slug: str) -> str:
     return f"auth_{slug}"
 
+
 # ============ GitHub-based storage functions ============
 
-def list_files(slug: str) -> List[Tuple[str, int, str, str, str]]:
+def list_files(slug: str, visibility: str) -> List[Tuple[str, int, str, str, str]]:
     """
     تعيد قائمة ملفات القسم من GitHub:
     (اسم الملف، الحجم، رابط التحميل download_url، المسار path، رقم sha)
+    حسب نوع الملفات (public / private).
     """
-    folder = SECTION_PATHS.get(slug, f"{GH_BASE_PATH}/{slug}")
+    folder = section_folder(slug, visibility)
     url = github_contents_url(folder)
 
     resp = requests.get(url, headers=github_headers())
@@ -230,11 +248,11 @@ def delete_file_from_github(path: str, sha: str) -> bool:
     return resp.status_code in (200, 204)
 
 
-def save_upload(slug: str, up):
+def save_upload(slug: str, visibility: str, up):
     """
-    حفظ الملف المرفوع داخل مجلد القسم في GitHub.
+    حفظ الملف المرفوع داخل مجلد القسم في GitHub (public أو private).
     ينشئ المجلدات تلقائيًا إذا لم تكن موجودة.
-    ويمنع تكرار نفس اسم الملف (بعد الجزء الزمني).
+    ويمنع تكرار نفس اسم الملف (بعد الجزء الزمني) داخل نفس نوع الملفات.
     """
     try:
         up.seek(0)
@@ -248,10 +266,10 @@ def save_upload(slug: str, up):
         safe = "_".join(safe.split())
         ext = ext.lower()
 
-        folder = SECTION_PATHS.get(slug, f"{GH_BASE_PATH}/{slug}")
+        folder = section_folder(slug, visibility)
         target_rest = safe + ext  # الاسم الأصلي + الامتداد
 
-        # --- فحص وجود ملف بنفس الاسم في هذا القسم مسبقاً ---
+        # --- فحص وجود ملف بنفس الاسم في هذا القسم ونفس نوع الملفات مسبقاً ---
         folder_url = github_contents_url(folder)
         resp = requests.get(folder_url, headers=github_headers())
         if resp.status_code == 200:
@@ -277,7 +295,7 @@ def save_upload(slug: str, up):
 
         url = github_contents_url(repo_path)
         data = {
-            "message": f"Add {fname} to {slug} via IMS",
+            "message": f"Add {fname} to {slug}/{visibility} via IMS",
             "content": content_b64,
             "branch": GH_BRANCH,
         }
@@ -291,6 +309,7 @@ def save_upload(slug: str, up):
     except Exception as e:
         return "__ERROR__:" + str(e)
 
+
 # ================= Sidebar: اختيار القسم + كلمة المرور =========
 
 st.sidebar.markdown("### اختر القسم")
@@ -300,7 +319,7 @@ sec_secret = st.secrets.get(SECRET_KEYS.get(slug, ""), "")
 
 st.sidebar.markdown("### صلاحيات القسم")
 pw = st.sidebar.text_input(
-    "كلمة المرور (للرفع فقط)",
+    "كلمة المرور (للرفع والملفات الداخلية)",
     type="password",
     key=f"pw_{slug}",
 )
@@ -312,12 +331,30 @@ if st.sidebar.button("دخول", key=f"enter_{slug}"):
         st.session_state[auth_key(slug)] = False
         st.sidebar.error("كلمة المرور غير صحيحة.")
 
-# ================= Files (قراءة للجميع) =========
+# اختيار نوع الملفات (عام / داخلي)
+if st.session_state.get(auth_key(slug), False):
+    vis_label = st.sidebar.radio(
+        "نوع الملفات المعروضة",
+        list(VISIBILITY_LABELS_FULL.keys()),
+        key=f"vis_{slug}",
+    )
+    visibility = VISIBILITY_LABELS_FULL[vis_label]
+else:
+    vis_label = "الملفات العامة (لجميع الموظفين)"
+    visibility = "public"
+    st.sidebar.markdown(
+        "<span style='font-size:12px;color:#6b7280'>لرؤية الملفات الداخلية ورفعها، أدخل كلمة المرور أعلاه.</span>",
+        unsafe_allow_html=True,
+    )
 
-st.markdown("### الملفات الحالية (متاحة للقراءة والتحميل للجميع) 📂")
-files = list_files(slug)
+# ================= Files (قراءة للجميع أو للخاص) =========
+
+title_suffix = "العامة" if visibility == "public" else "الداخلية (الخاصة)"
+st.markdown(f"### الملفات الحالية — {title_suffix} (متاحة للقراءة والتحميل حسب الصلاحيات) 📂")
+
+files = list_files(slug, visibility)
 if not files:
-    st.info("لا توجد ملفات بعد في هذا القسم.")
+    st.info("لا توجد ملفات بعد في هذا القسم لهذا النوع من الملفات.")
 else:
     for i, (nm, sz, download_url, path, sha) in enumerate(files, start=1):
         c1, c2, c3 = st.columns([5, 2, 1])
@@ -335,7 +372,7 @@ else:
                             "تنزيل",
                             data=r.content,
                             file_name=nm,
-                            key=f"dl_{slug}_{i}",
+                            key=f"dl_{slug}_{visibility}_{i}",
                         )
                     else:
                         st.caption("تعذّر تحميل الملف من GitHub.")
@@ -344,8 +381,9 @@ else:
             else:
                 st.caption("لا يوجد رابط تحميل متاح.")
         with c3:
+            # الحذف متاح فقط لمن يملك كلمة المرور
             if st.session_state.get(auth_key(slug), False):
-                if st.button("حذف", key=f"del_{slug}_{i}"):
+                if st.button("حذف", key=f"del_{slug}_{visibility}_{i}"):
                     ok = delete_file_from_github(path, sha)
                     if ok:
                         st.success("✅ تم حذف الملف من GitHub.")
@@ -358,15 +396,17 @@ else:
 st.markdown("### لوحة التحكم (رفع الملفات للقسم المحدد) 🔒")
 
 if st.session_state.get(auth_key(slug), False):
-    st.markdown("#### رفع ملف جديد إلى هذا القسم (GitHub)")
+    st.markdown(
+        f"#### رفع ملف جديد إلى هذا القسم — نوع الملفات: {'عام' if visibility=='public' else 'داخلي'} (GitHub)"
+    )
     up = st.file_uploader(
-        "اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None
+        "اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None, key=f"upl_{slug}_{visibility}"
     )
     if up is not None:
-        res = save_upload(slug, up)
+        res = save_upload(slug, visibility, up)
         if res == "__DUPLICATE__":
             st.warning(
-                "تم تجاهل الرفع: هذا الملف موجود مسبقًا في هذا القسم بنفس الاسم. "
+                "تم تجاهل الرفع: هذا الملف موجود مسبقًا في هذا القسم بنفس الاسم لهذا النوع من الملفات. "
                 "يرجى تغيير اسم الملف أو حذف النسخة القديمة أولاً."
             )
         elif isinstance(res, str) and res.startswith("__ERROR__:"):
@@ -375,7 +415,7 @@ if st.session_state.get(auth_key(slug), False):
             st.success("✅ تم رفع الملف بنجاح إلى GitHub.")
             st.rerun()
 else:
-    st.info("لرفع الملفات في هذا القسم، أدخل كلمة المرور الصحيحة من القائمة الجانبية.")
+    st.info("لرفع الملفات العامة أو الداخلية في هذا القسم، أدخل كلمة المرور الصحيحة من القائمة الجانبية.")
 
 st.markdown(
     "<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>",
