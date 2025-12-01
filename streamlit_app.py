@@ -5,49 +5,18 @@
 # ------------------------------------------------------------
 
 import os
+import io
 import base64
 from datetime import datetime
 from typing import List, Tuple
 
-import requests
 import streamlit as st
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ================= App setup =================
 st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
-
-# ================= GitHub Config =============
-
-# يجب ضبط هذه القيم في Streamlit secrets
-GH_TOKEN = st.secrets.get("GH_TOKEN", "")
-GH_OWNER = st.secrets.get("GH_OWNER", "")
-GH_REPO  = st.secrets.get("GH_REPO", "")
-
-# فرع الريبو (غالباً main) ومسار الجذر للملفات داخل الريبو
-GH_BRANCH    = st.secrets.get("GH_BRANCH", "main")
-GH_BASE_PATH = st.secrets.get("GH_BASE_PATH", "qms")
-
-if not GH_TOKEN or not GH_OWNER or not GH_REPO:
-    st.error("⚠️ لم يتم ضبط GH_TOKEN / GH_OWNER / GH_REPO في Streamlit Secrets.")
-    st.stop()
-
-
-def github_headers():
-    return {
-        "Authorization": f"Bearer {GH_TOKEN}",
-        "Accept": "application/vnd.github+json",
-    }
-
-
-def github_contents_url(path: str) -> str:
-    # path مثل "qms/policies/public"
-    return f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{path}"
-
-
-# دالة تعطي مسار المجلد داخل الريبو حسب القسم ونوع الملفات
-def section_folder(slug: str, visibility: str) -> str:
-    # visibility = "public" أو "private"
-    return f"{GH_BASE_PATH}/{slug}/{visibility}"
-
 
 # ================= Styling ===================
 st.markdown(
@@ -72,7 +41,7 @@ st.markdown(
   .muted{color:#6b7280;font-size:13px}
   .sig{ text-align:center; color:#a07605; font-weight:700; margin:10px 0 0;}
   .cert {max-width:980px;margin:12px auto 6px;border-radius:12px;overflow:hidden;
-         border:1px solid #e9eef5; background:#fff;}
+         border:1px solid #e6ebf2; background:#fff;}
   .cert-caption{max-width:980px;margin:4px auto 18px;text-align:center;color:#6b7280;font-size:13px}
 </style>
 """,
@@ -89,7 +58,6 @@ LOGO_PATH = "sold.png"       # شعار الشركة محليًا باسم sold.
 def inline_logo_src(path: str = "sold.png") -> str:
     """
     يعيد Data URI للصورة من الملف المحلي إن وجد،
-    وإلا يحاول جلبه من GitHub (raw),
     وإلا يسقط إلى صورة بديلة عامة.
     """
     try:
@@ -97,8 +65,7 @@ def inline_logo_src(path: str = "sold.png") -> str:
             b64 = base64.b64encode(f.read()).decode("utf-8")
             return f"data:image/png;base64,{b64}"
     except Exception:
-        # محاولة جلبه من الريبو نفسه لو مرفوع هناك
-        return f"https://raw.githubusercontent.com/{GH_OWNER}/{GH_REPO}/{GH_BRANCH}/{path}"
+        return "https://raw.githubusercontent.com/nyxb/placeholder-assets/main/toc-logo.png"
 
 
 st.markdown("<div class='hero-wrap'>", unsafe_allow_html=True)
@@ -180,15 +147,30 @@ SECRET_KEYS = {
     "risks": "PW_RISKS",
 }
 
-VISIBILITY_LABELS_PUBLIC_ONLY = {
-    "الملفات العامة (لجميع الموظفين)": "public",
-}
-VISIBILITY_LABELS_FULL = {
-    "الملفات العامة (لجميع الموظفين)": "public",
-    "الملفات الداخلية (الخاصة بمسؤول القسم)": "private",
-}
+# ================= Google Drive Setup =================
+
+DRIVE_ROOT_FOLDER_ID = st.secrets.get("DRIVE_ROOT_FOLDER_ID", "").strip()
+if not DRIVE_ROOT_FOLDER_ID:
+    st.error("⚠️ لم يتم ضبط DRIVE_ROOT_FOLDER_ID في Secrets. يرجى إضافته.")
+    st.stop()
 
 
+@st.cache_resource
+def get_drive_service():
+    """إنشاء اتصال واحد فقط بـ Google Drive."""
+    sa_info = dict(st.secrets["google_service_account"])
+    creds = service_account.Credentials.from_service_account_info(
+        sa_info,
+        scopes=["https://www.googleapis.com/auth/drive"],
+    )
+    service = build("drive", "v3", credentials=creds)
+    return service
+
+
+drive_service = get_drive_service()
+
+
+@st.cache_data
 def human_size(n: int) -> str:
     for u in ["B", "KB", "MB", "GB"]:
         if n < 1024:
@@ -201,113 +183,128 @@ def auth_key(slug: str) -> str:
     return f"auth_{slug}"
 
 
-# ============ GitHub-based storage functions ============
+# حفظ ID مجلدات الأقسام في الذاكرة
+if "section_folders" not in st.session_state:
+    st.session_state["section_folders"] = {}
 
-def list_files(slug: str, visibility: str) -> List[Tuple[str, int, str, str, str]]:
+
+def ensure_section_folder(slug: str) -> str:
     """
-    تعيد قائمة ملفات القسم من GitHub:
-    (اسم الملف، الحجم، رابط التحميل download_url، المسار path، رقم sha)
-    حسب نوع الملفات (public / private).
+    يتحقق من وجود مجلد داخل IMS-Storage للقسم، وإن لم يوجد ينشئه.
+    اسم المجلد هو نفس slug (policies, objectives, ...).
     """
-    folder = section_folder(slug, visibility)
-    url = github_contents_url(folder)
+    cache = st.session_state["section_folders"]
+    if slug in cache:
+        return cache[slug]
 
-    resp = requests.get(url, headers=github_headers())
-    if resp.status_code != 200:
-        # لو لم يوجد المجلد أصلاً نرجع قائمة فارغة
-        return []
+    # البحث عن المجلد بالاسم داخل الجذر
+    q = (
+        f"'{DRIVE_ROOT_FOLDER_ID}' in parents and "
+        f"name = '{slug}' and mimeType = 'application/vnd.google-apps.folder' "
+        f"and trashed = false"
+    )
+    res = (
+        drive_service.files()
+        .list(q=q, fields="files(id,name)", spaces="drive")
+        .execute()
+    )
+    files = res.get("files", [])
+    if files:
+        folder_id = files[0]["id"]
+    else:
+        # إنشاء مجلد جديد
+        meta = {
+            "name": slug,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [DRIVE_ROOT_FOLDER_ID],
+        }
+        folder = drive_service.files().create(body=meta, fields="id").execute()
+        folder_id = folder["id"]
 
-    items = resp.json()
-    out: List[Tuple[str, int, str, str, str]] = []
+    cache[slug] = folder_id
+    return folder_id
 
-    # GitHub يعيد ملفات ومجلدات؛ نأخذ الملفات فقط
-    for it in items:
-        if it.get("type") == "file":
-            name = it["name"]
-            size = it.get("size", 0)
-            download_url = it.get("download_url")
-            path = it.get("path")
-            sha = it.get("sha")
-            out.append((name, size, download_url, path, sha))
 
+def list_files(slug: str) -> List[Tuple[str, int, str]]:
+    """
+    يرجع قائمة ملفات القسم من Google Drive:
+    (الاسم، الحجم، file_id)
+    """
+    folder_id = ensure_section_folder(slug)
+
+    q = f"'{folder_id}' in parents and trashed = false"
+    res = (
+        drive_service.files()
+        .list(
+            q=q,
+            fields="files(id, name, size, modifiedTime)",
+            orderBy="name desc",
+        )
+        .execute()
+    )
+    items = res.get("files", [])
+    out: List[Tuple[str, int, str]] = []
+    for f in items:
+        name = f.get("name", "file")
+        size = int(f.get("size", 0))
+        fid = f.get("id")
+        out.append((name, size, fid))
+    # مرتبة تنازلياً بالاسم (مثل السابق)
     out.sort(key=lambda x: x[0], reverse=True)
     return out
 
 
-def delete_file_from_github(path: str, sha: str) -> bool:
-    """
-    حذف ملف من GitHub بشكل نهائي باستخدام المسار و sha.
-    """
-    url = github_contents_url(path)
-    data = {
-        "message": f"Delete {path} via IMS",
-        "sha": sha,
-        "branch": GH_BRANCH,
-    }
-    resp = requests.delete(url, headers=github_headers(), json=data)
-    return resp.status_code in (200, 204)
+def download_file_content(file_id: str) -> bytes:
+    """تحميل محتوى ملف من Google Drive لاستخدامه في download_button."""
+    request = drive_service.files().get_media(fileId=file_id)
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    fh.seek(0)
+    return fh.read()
 
 
-def save_upload(slug: str, visibility: str, up):
+def save_upload(slug: str, up) -> str:
     """
-    حفظ الملف المرفوع داخل مجلد القسم في GitHub (public أو private).
-    ينشئ المجلدات تلقائيًا إذا لم تكن موجودة.
-    ويمنع تكرار نفس اسم الملف (بعد الجزء الزمني) داخل نفس نوع الملفات.
+    رفع ملف جديد إلى مجلد القسم في Google Drive.
+    يعيد file_id أو رسالة خطأ تبدأ بـ __ERROR__.
     """
     try:
+        folder_id = ensure_section_folder(slug)
         up.seek(0)
         raw = up.getbuffer() if hasattr(up, "getbuffer") else up.read()
         raw = bytes(raw)
 
+        stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
         base, ext = os.path.splitext(up.name or "file")
         safe = "".join(
             ch if (ch.isalnum() or ch in ("_", "-", ".", " ")) else "_" for ch in base
         )
         safe = "_".join(safe.split())
-        ext = ext.lower()
+        fname = f"{stamp}_{safe}{ext.lower()}"
 
-        folder = section_folder(slug, visibility)
-        target_rest = safe + ext  # الاسم الأصلي + الامتداد
+        media = MediaIoBaseUpload(
+            io.BytesIO(raw),
+            mimetype=up.type or "application/octet-stream",
+            resumable=False,
+        )
 
-        # --- فحص وجود ملف بنفس الاسم في هذا القسم ونفس نوع الملفات مسبقاً ---
-        folder_url = github_contents_url(folder)
-        resp = requests.get(folder_url, headers=github_headers())
-        if resp.status_code == 200:
-            items = resp.json()
-            for it in items:
-                if it.get("type") == "file":
-                    existing_name = it["name"]
-                    # نأخذ الجزء بعد أول "_" لأنه يأتي بعد التوقيت
-                    if "_" in existing_name:
-                        existing_rest = existing_name.split("_", 1)[1]
-                    else:
-                        existing_rest = existing_name
-                    if existing_rest == target_rest:
-                        # الملف موجود مسبقاً بنفس الاسم
-                        return "__DUPLICATE__"
-
-        # --- إنشاء اسم جديد مع ختم زمني ثم الرفع إلى GitHub ---
-        stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
-        fname = f"{stamp}_{safe}{ext}"
-        repo_path = f"{folder}/{fname}"
-
-        content_b64 = base64.b64encode(raw).decode("utf-8")
-
-        url = github_contents_url(repo_path)
-        data = {
-            "message": f"Add {fname} to {slug}/{visibility} via IMS",
-            "content": content_b64,
-            "branch": GH_BRANCH,
-        }
-
-        resp = requests.put(url, json=data, headers=github_headers())
-        if resp.status_code in (201, 200):
-            return repo_path
-        else:
-            return "__ERROR__:" + f"GitHub {resp.status_code}: {resp.text}"
+        file_meta = {"name": fname, "parents": [folder_id]}
+        created = (
+            drive_service.files()
+            .create(body=file_meta, media_body=media, fields="id")
+            .execute()
+        )
+        return created["id"]
 
     except Exception as e:
         return "__ERROR__:" + str(e)
+
+
+def delete_file(file_id: str) -> None:
+    drive_service.files().delete(fileId=file_id).execute()
 
 
 # ================= Sidebar: اختيار القسم + كلمة المرور =========
@@ -319,7 +316,7 @@ sec_secret = st.secrets.get(SECRET_KEYS.get(slug, ""), "")
 
 st.sidebar.markdown("### صلاحيات القسم")
 pw = st.sidebar.text_input(
-    "كلمة المرور (للرفع والملفات الداخلية)",
+    "كلمة المرور (للرفع والحذف فقط)",
     type="password",
     key=f"pw_{slug}",
 )
@@ -331,32 +328,15 @@ if st.sidebar.button("دخول", key=f"enter_{slug}"):
         st.session_state[auth_key(slug)] = False
         st.sidebar.error("كلمة المرور غير صحيحة.")
 
-# اختيار نوع الملفات (عام / داخلي)
-if st.session_state.get(auth_key(slug), False):
-    vis_label = st.sidebar.radio(
-        "نوع الملفات المعروضة",
-        list(VISIBILITY_LABELS_FULL.keys()),
-        key=f"vis_{slug}",
-    )
-    visibility = VISIBILITY_LABELS_FULL[vis_label]
-else:
-    vis_label = "الملفات العامة (لجميع الموظفين)"
-    visibility = "public"
-    st.sidebar.markdown(
-        "<span style='font-size:12px;color:#6b7280'>لرؤية الملفات الداخلية ورفعها، أدخل كلمة المرور أعلاه.</span>",
-        unsafe_allow_html=True,
-    )
+# ================= Files (قراءة للجميع) =========
 
-# ================= Files (قراءة للجميع أو للخاص) =========
+st.markdown("### الملفات الحالية (متاحة للقراءة والتحميل للجميع) 📂")
 
-title_suffix = "العامة" if visibility == "public" else "الداخلية (الخاصة)"
-st.markdown(f"### الملفات الحالية — {title_suffix} (متاحة للقراءة والتحميل حسب الصلاحيات) 📂")
-
-files = list_files(slug, visibility)
+files = list_files(slug)
 if not files:
-    st.info("لا توجد ملفات بعد في هذا القسم لهذا النوع من الملفات.")
+    st.info("لا توجد ملفات بعد في هذا القسم.")
 else:
-    for i, (nm, sz, download_url, path, sha) in enumerate(files, start=1):
+    for i, (nm, sz, fid) in enumerate(files, start=1):
         c1, c2, c3 = st.columns([5, 2, 1])
         with c1:
             st.markdown(
@@ -364,58 +344,45 @@ else:
                 unsafe_allow_html=True,
             )
         with c2:
-            if download_url:
-                try:
-                    r = requests.get(download_url)
-                    if r.status_code == 200:
-                        st.download_button(
-                            "تنزيل",
-                            data=r.content,
-                            file_name=nm,
-                            key=f"dl_{slug}_{visibility}_{i}",
-                        )
-                    else:
-                        st.caption("تعذّر تحميل الملف من GitHub.")
-                except Exception as e:
-                    st.caption(f"تعذّر تحميل الملف: {e}")
-            else:
-                st.caption("لا يوجد رابط تحميل متاح.")
+            try:
+                content = download_file_content(fid)
+                st.download_button(
+                    "تنزيل",
+                    data=content,
+                    file_name=nm,
+                    key=f"dl_{slug}_{i}",
+                )
+            except Exception as e:
+                st.caption(f"تعذّر تنزيل الملف: {e}")
         with c3:
-            # الحذف متاح فقط لمن يملك كلمة المرور
+            # زر حذف يظهر فقط لو المستخدم أدخل كلمة المرور
             if st.session_state.get(auth_key(slug), False):
-                if st.button("حذف", key=f"del_{slug}_{visibility}_{i}"):
-                    ok = delete_file_from_github(path, sha)
-                    if ok:
-                        st.success("✅ تم حذف الملف من GitHub.")
-                        st.rerun()
-                    else:
-                        st.error("تعذّر حذف الملف من GitHub.")
+                if st.button("حذف", key=f"rm_{slug}_{i}"):
+                    try:
+                        delete_file(fid)
+                        st.success("تم حذف الملف.")
+                        st.experimental_rerun()
+                    except Exception as e:
+                        st.error(f"تعذّر الحذف: {e}")
 
 # ================= Control Panel (رفع فقط) =============
 
 st.markdown("### لوحة التحكم (رفع الملفات للقسم المحدد) 🔒")
 
 if st.session_state.get(auth_key(slug), False):
-    st.markdown(
-        f"#### رفع ملف جديد إلى هذا القسم — نوع الملفات: {'عام' if visibility=='public' else 'داخلي'} (GitHub)"
-    )
+    st.markdown("#### رفع ملف جديد إلى هذا القسم (Google Drive)")
     up = st.file_uploader(
-        "اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None, key=f"upl_{slug}_{visibility}"
+        "اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None, key=f"uploader_{slug}"
     )
     if up is not None:
-        res = save_upload(slug, visibility, up)
-        if res == "__DUPLICATE__":
-            st.warning(
-                "تم تجاهل الرفع: هذا الملف موجود مسبقًا في هذا القسم بنفس الاسم لهذا النوع من الملفات. "
-                "يرجى تغيير اسم الملف أو حذف النسخة القديمة أولاً."
-            )
-        elif isinstance(res, str) and res.startswith("__ERROR__:"):
+        res = save_upload(slug, up)
+        if isinstance(res, str) and res.startswith("__ERROR__:"):
             st.error("تعذّر حفظ الملف: " + res.replace("__ERROR__:", ""))
         else:
-            st.success("✅ تم رفع الملف بنجاح إلى GitHub.")
-            st.rerun()
+            st.success("✅ تم رفع الملف بنجاح إلى Google Drive.")
+            st.experimental_rerun()
 else:
-    st.info("لرفع الملفات العامة أو الداخلية في هذا القسم، أدخل كلمة المرور الصحيحة من القائمة الجانبية.")
+    st.info("لرفع أو حذف الملفات في هذا القسم، أدخل كلمة المرور الصحيحة من القائمة الجانبية.")
 
 st.markdown(
     "<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>",
