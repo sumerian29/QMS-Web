@@ -8,7 +8,7 @@ import os
 import io
 import base64
 from datetime import datetime
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import streamlit as st
 from google.oauth2 import service_account
@@ -163,8 +163,7 @@ def get_drive_service():
         sa_info,
         scopes=["https://www.googleapis.com/auth/drive"],
     )
-    service = build("drive", "v3", credentials=creds)
-    return service
+    return build("drive", "v3", credentials=creds)
 
 
 drive_service = get_drive_service()
@@ -172,6 +171,10 @@ drive_service = get_drive_service()
 
 @st.cache_data
 def human_size(n: int) -> str:
+    try:
+        n = int(n or 0)
+    except Exception:
+        n = 0
     for u in ["B", "KB", "MB", "GB"]:
         if n < 1024:
             return f"{n:.0f} {u}"
@@ -183,6 +186,25 @@ def auth_key(slug: str) -> str:
     return f"auth_{slug}"
 
 
+# ================= ثابت: Folder IDs لكل قسم (من Secrets) =================
+
+def get_section_folder_id(slug: str) -> str:
+    """
+    يأخذ Folder ID للقسم من Secrets:
+    [DRIVE_SECTION_FOLDERS]
+    policies="...."
+    objectives="...."
+    ...
+    """
+    mapping = st.secrets.get("DRIVE_SECTION_FOLDERS", {})
+    fid = (mapping.get(slug) or "").strip()
+    if not fid:
+        raise RuntimeError(
+            f"⚠️ لم يتم العثور على Folder ID للقسم: {slug} داخل [DRIVE_SECTION_FOLDERS] في Secrets."
+        )
+    return fid
+
+
 # حفظ ID مجلدات الأقسام في الذاكرة
 if "section_folders" not in st.session_state:
     st.session_state["section_folders"] = {}
@@ -190,45 +212,85 @@ if "section_folders" not in st.session_state:
 
 def ensure_section_folder(slug: str) -> str:
     """
-    يتحقق من وجود مجلد داخل IMS-Storage للقسم، وإن لم يوجد ينشئه.
-    اسم المجلد هو نفس slug (policies, objectives, ...).
+    ✅ التحديث الأساسي:
+    بدل البحث/الإنشاء بالاسم، نستخدم Folder ID ثابت من Secrets.
+    هذا يمنع الاختفاء وتبدّل المجلدات.
     """
     cache = st.session_state["section_folders"]
     if slug in cache:
         return cache[slug]
 
-    # البحث عن المجلد بالاسم داخل الجذر
-    q = (
-        f"'{DRIVE_ROOT_FOLDER_ID}' in parents and "
-        f"name = '{slug}' and mimeType = 'application/vnd.google-apps.folder' "
-        f"and trashed = false"
-    )
-    res = (
-        drive_service.files()
-        .list(q=q, fields="files(id,name)", spaces="drive")
-        .execute()
-    )
-    files = res.get("files", [])
-    if files:
-        folder_id = files[0]["id"]
-    else:
-        # إنشاء مجلد جديد
-        meta = {
-            "name": slug,
-            "mimeType": "application/vnd.google-apps.folder",
-            "parents": [DRIVE_ROOT_FOLDER_ID],
-        }
-        folder = drive_service.files().create(body=meta, fields="id").execute()
-        folder_id = folder["id"]
+    folder_id = get_section_folder_id(slug)
+
+    # تحقق أن المجلد موجود ويمكن الوصول إليه
+    try:
+        meta = drive_service.files().get(fileId=folder_id, fields="id,name,mimeType").execute()
+        if meta.get("mimeType") != "application/vnd.google-apps.folder":
+            raise RuntimeError("ID المُدخل ليس لمجلد.")
+    except Exception as e:
+        raise RuntimeError(
+            f"تعذّر الوصول إلى مجلد القسم ({slug}) بالـ ID: {folder_id}. "
+            f"تأكد من صحة الـ ID والمشاركة مع حساب الخدمة. تفاصيل: {e}"
+        )
 
     cache[slug] = folder_id
     return folder_id
 
 
-def list_files(slug: str) -> List[Tuple[str, int, str]]:
+# ================= تنزيل: Binary + Export لملفات Google Editors =================
+
+GOOGLE_EXPORT_MAP = {
+    "application/vnd.google-apps.document": ("application/pdf", ".pdf"),
+    "application/vnd.google-apps.spreadsheet": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsx",
+    ),
+    "application/vnd.google-apps.presentation": ("application/pdf", ".pdf"),
+    "application/vnd.google-apps.drawing": ("image/png", ".png"),
+}
+
+
+def _choose_export(name: str, mime: str) -> Tuple[Optional[str], str]:
     """
+    يرجع (export_mime, download_name)
+    - إن كان Google Doc/Sheet/Slide يتم تحويله تلقائيًا
+    - غير ذلك يُنزّل كما هو
+    """
+    if mime in GOOGLE_EXPORT_MAP:
+        export_mime, ext = GOOGLE_EXPORT_MAP[mime]
+        base, _ = os.path.splitext(name)
+        return export_mime, f"{base}{ext}"
+    return None, name
+
+
+def download_file_content(file_id: str, mime: str, name: str) -> Tuple[bytes, str]:
+    """
+    ✅ التحديث الأساسي لحل 403:
+    - إذا ملف Google Editors -> export_media
+    - إذا ملف عادي -> get_media
+    """
+    export_mime, download_name = _choose_export(name, mime)
+
+    fh = io.BytesIO()
+    if export_mime:
+        request = drive_service.files().export_media(fileId=file_id, mimeType=export_mime)
+    else:
+        request = drive_service.files().get_media(fileId=file_id)
+
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    fh.seek(0)
+    return fh.read(), download_name
+
+
+def list_files(slug: str) -> List[Tuple[str, int, str, str]]:
+    """
+    ✅ التحديث:
     يرجع قائمة ملفات القسم من Google Drive:
-    (الاسم، الحجم، file_id)
+    (الاسم، الحجم، file_id، mimeType)
+    - يتجاهل المجلدات نهائيًا
     """
     folder_id = ensure_section_folder(slug)
 
@@ -237,33 +299,25 @@ def list_files(slug: str) -> List[Tuple[str, int, str]]:
         drive_service.files()
         .list(
             q=q,
-            fields="files(id, name, size, modifiedTime)",
-            orderBy="name desc",
+            fields="files(id, name, size, mimeType, modifiedTime)",
+            orderBy="modifiedTime desc",
         )
         .execute()
     )
     items = res.get("files", [])
-    out: List[Tuple[str, int, str]] = []
+
+    out: List[Tuple[str, int, str, str]] = []
     for f in items:
+        mime = f.get("mimeType", "")
+        if mime == "application/vnd.google-apps.folder":
+            continue  # لا نعرض المجلدات كملفات
+
         name = f.get("name", "file")
-        size = int(f.get("size", 0))
+        size = int(f.get("size", 0) or 0)  # قد يكون 0 لملفات Google Editors
         fid = f.get("id")
-        out.append((name, size, fid))
-    # مرتبة تنازلياً بالاسم (مثل السابق)
-    out.sort(key=lambda x: x[0], reverse=True)
+        out.append((name, size, fid, mime))
+
     return out
-
-
-def download_file_content(file_id: str) -> bytes:
-    """تحميل محتوى ملف من Google Drive لاستخدامه في download_button."""
-    request = drive_service.files().get_media(fileId=file_id)
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    fh.seek(0)
-    return fh.read()
 
 
 def save_upload(slug: str, up) -> str:
@@ -279,9 +333,7 @@ def save_upload(slug: str, up) -> str:
 
         stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
         base, ext = os.path.splitext(up.name or "file")
-        safe = "".join(
-            ch if (ch.isalnum() or ch in ("_", "-", ".", " ")) else "_" for ch in base
-        )
+        safe = "".join(ch if (ch.isalnum() or ch in ("_", "-", ".", " ")) else "_" for ch in base)
         safe = "_".join(safe.split())
         fname = f"{stamp}_{safe}{ext.lower()}"
 
@@ -332,24 +384,33 @@ if st.sidebar.button("دخول", key=f"enter_{slug}"):
 
 st.markdown("### الملفات الحالية (متاحة للقراءة والتحميل للجميع) 📂")
 
-files = list_files(slug)
+if st.button("تحديث القائمة 🔄", key=f"refresh_{slug}"):
+    st.experimental_rerun()
+
+try:
+    files = list_files(slug)
+except Exception as e:
+    st.error(str(e))
+    st.stop()
+
 if not files:
     st.info("لا توجد ملفات بعد في هذا القسم.")
 else:
-    for i, (nm, sz, fid) in enumerate(files, start=1):
+    for i, (nm, sz, fid, mime) in enumerate(files, start=1):
         c1, c2, c3 = st.columns([5, 2, 1])
         with c1:
+            size_txt = human_size(sz) if sz else "—"
             st.markdown(
-                f"**#{i} — {nm}**  <span class='muted'>({human_size(sz)})</span>",
+                f"**#{i} — {nm}**  <span class='muted'>({size_txt})</span>",
                 unsafe_allow_html=True,
             )
         with c2:
             try:
-                content = download_file_content(fid)
+                content, dl_name = download_file_content(fid, mime, nm)
                 st.download_button(
                     "تنزيل",
                     data=content,
-                    file_name=nm,
+                    file_name=dl_name,
                     key=f"dl_{slug}_{i}",
                 )
             except Exception as e:
@@ -372,7 +433,9 @@ st.markdown("### لوحة التحكم (رفع الملفات للقسم الم�
 if st.session_state.get(auth_key(slug), False):
     st.markdown("#### رفع ملف جديد إلى هذا القسم (Google Drive)")
     up = st.file_uploader(
-        "اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None, key=f"uploader_{slug}"
+        "اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)",
+        type=None,
+        key=f"uploader_{slug}",
     )
     if up is not None:
         res = save_upload(slug, up)
