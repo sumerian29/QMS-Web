@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 
 import streamlit as st
+st.warning("TEST DRIVE_ROOT_FOLDER_ID:")
+st.write(st.secrets.get("DRIVE_ROOT_FOLDER_ID"))
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -416,3 +418,4 @@ st.markdown(
     "<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>",
     unsafe_allow_html=True,
 )
+
