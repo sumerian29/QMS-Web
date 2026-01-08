@@ -8,7 +8,7 @@ import os
 import io
 import base64
 from datetime import datetime
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 import streamlit as st
 from google.oauth2 import service_account
@@ -18,6 +18,7 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ================= App setup =================
 st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
+
 
 # ================= Styling ===================
 st.markdown(
@@ -41,15 +42,18 @@ st.markdown(
         padding:14px 18px;max-width:980px;margin:10px auto;}
   .muted{color:#6b7280;font-size:13px}
   .sig{ text-align:center; color:#a07605; font-weight:700; margin:10px 0 0;}
+  .cert {max-width:980px;margin:12px auto 6px;border-radius:12px;overflow:hidden;
+         border:1px solid #e6ebf2; background:#fff;}
   .cert-caption{max-width:980px;margin:4px auto 18px;text-align:center;color:#6b7280;font-size:13px}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
+
 # ================= Header / Hero =============
-CERT_PATH = "iso_cert.jpg"   # صورة شهادة ISO
-LOGO_PATH = "sold.png"       # شعار الشركة
+CERT_PATH = "iso_cert.jpg"   # ضع الصورة بهذا الاسم بجانب الملف لعرض شهادة ISO
+LOGO_PATH = "sold.png"       # شعار الشركة محليًا باسم sold.png
 
 
 @st.cache_data
@@ -107,6 +111,7 @@ if os.path.exists(CERT_PATH):
 
 st.divider()
 
+
 # ================= Sections & Passwords ======
 SECTIONS_AR2EN = {
     "سياسة الجودة": "policies",
@@ -141,47 +146,10 @@ SECRET_KEYS = {
 }
 
 
-# ================= Google Drive Setup =================
-DRIVE_ROOT_FOLDER_ID = st.secrets.get("DRIVE_ROOT_FOLDER_ID", "").strip()
-if not DRIVE_ROOT_FOLDER_ID:
-    st.error("⚠️ لم يتم ضبط DRIVE_ROOT_FOLDER_ID في Secrets. يرجى إضافته.")
-    st.stop()
-
-SECTION_FOLDER_IDS: Dict[str, str] = dict(st.secrets.get("DRIVE_SECTION_FOLDERS", {}))
-
-
-@st.cache_resource
-def get_drive_service():
-    """
-    اتصال Google Drive (مهم جدًا: إصلاح private_key إن كان يحتوي \\n).
-    """
-    sa_info = dict(st.secrets["google_service_account"])
-
-    # ✅ إصلاح مشاكل التنسيق الشائعة في Streamlit Secrets
-    pk = sa_info.get("private_key", "")
-    if isinstance(pk, str):
-        pk = pk.strip()
-        # إذا كان موجوداً مثل "\\n" نحوله إلى أسطر حقيقية
-        pk = pk.replace("\\n", "\n")
-        # إزالة اقتباسات زائدة إن وُجدت
-        pk = pk.strip('"').strip("'")
-        sa_info["private_key"] = pk
-
-    creds = service_account.Credentials.from_service_account_info(
-        sa_info,
-        scopes=["https://www.googleapis.com/auth/drive"],
-    )
-    return build("drive", "v3", credentials=creds)
-
-
-drive_service = get_drive_service()
-
-
+# ================= Helpers =================
 @st.cache_data
 def human_size(n: int) -> str:
-    if n is None:
-        return "—"
-    n = int(n)
+    n = int(n or 0)
     for u in ["B", "KB", "MB", "GB"]:
         if n < 1024:
             return f"{n:.0f} {u}"
@@ -193,145 +161,63 @@ def auth_key(slug: str) -> str:
     return f"auth_{slug}"
 
 
-def ensure_section_folder(slug: str) -> str:
+def normalize_private_key(raw_key: str) -> str:
     """
-    1) إذا أعطيت Folder ID في Secrets نستخدمه مباشرة.
-    2) إن لم يوجد، ننشئ/نبحث داخل الجذر كحل احتياطي.
+    يجعل private_key صالحًا حتى لو كان:
+    - داخل TOML كسطر واحد فيه \\n
+    - أو فيه مسافات زائدة
     """
-    if slug in SECTION_FOLDER_IDS and SECTION_FOLDER_IDS[slug].strip():
-        return SECTION_FOLDER_IDS[slug].strip()
+    if not raw_key:
+        return ""
 
-    q = (
-        f"'{DRIVE_ROOT_FOLDER_ID}' in parents and "
-        f"name = '{slug}' and mimeType = 'application/vnd.google-apps.folder' "
-        f"and trashed = false"
-    )
-    res = drive_service.files().list(q=q, fields="files(id,name)", spaces="drive").execute()
-    files = res.get("files", [])
-    if files:
-        return files[0]["id"]
+    key = raw_key.strip().strip('"').strip("'")
 
-    meta = {
-        "name": slug,
-        "mimeType": "application/vnd.google-apps.folder",
-        "parents": [DRIVE_ROOT_FOLDER_ID],
-    }
-    folder = drive_service.files().create(body=meta, fields="id").execute()
-    return folder["id"]
+    # لو جاء على شكل \n كنص، نحوله لأسطر حقيقية
+    if "\\n" in key and "\n" not in key:
+        key = key.replace("\\n", "\n")
+
+    # ضمان وجود BEGIN/END
+    if "BEGIN PRIVATE KEY" not in key:
+        return ""
+
+    # تنظيف أسطر زائدة
+    key = key.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+    return key
 
 
-def list_files(slug: str) -> List[Tuple[str, int, str, str]]:
+def get_section_folder_id_from_secrets(slug: str) -> Optional[str]:
     """
-    (name, size, file_id, mimeType)
+    يقرأ IDs من:
+    [DRIVE_SECTION_FOLDERS]
+    policies="..."
+    ...
     """
-    folder_id = ensure_section_folder(slug)
-    q = f"'{folder_id}' in parents and trashed = false"
-    res = drive_service.files().list(
-        q=q,
-        fields="files(id,name,size,mimeType,modifiedTime)",
-        orderBy="modifiedTime desc",
-        spaces="drive",
-    ).execute()
-
-    out = []
-    for f in res.get("files", []):
-        out.append((
-            f.get("name", "file"),
-            int(f.get("size", 0) or 0),
-            f.get("id", ""),
-            f.get("mimeType", ""),
-        ))
-    return out
-
-
-def download_file_content(file_id: str, mime_type: str) -> bytes:
-    """
-    تنزيل:
-    - الملفات العادية: get_media
-    - Google Docs/Sheets/Slides: export_media (لأن get_media يعطي 403)
-    """
-    google_types = {
-        "application/vnd.google-apps.document": ("application/pdf", ".pdf"),
-        "application/vnd.google-apps.spreadsheet": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
-        "application/vnd.google-apps.presentation": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
-    }
-
-    fh = io.BytesIO()
-
-    if mime_type in google_types:
-        export_mime, _ = google_types[mime_type]
-        request = drive_service.files().export_media(fileId=file_id, mimeType=export_mime)
-        downloader = MediaIoBaseDownload(fh, request)
-    else:
-        request = drive_service.files().get_media(fileId=file_id)
-        downloader = MediaIoBaseDownload(fh, request)
-
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-
-    fh.seek(0)
-    return fh.read()
-
-
-def suggest_download_name(original_name: str, mime_type: str) -> str:
-    google_types = {
-        "application/vnd.google-apps.document": ".pdf",
-        "application/vnd.google-apps.spreadsheet": ".xlsx",
-        "application/vnd.google-apps.presentation": ".pptx",
-    }
-    ext = google_types.get(mime_type)
-    if not ext:
-        return original_name
-
-    base, _old = os.path.splitext(original_name)
-    return f"{base}{ext}"
-
-
-def save_upload(slug: str, up) -> str:
     try:
-        folder_id = ensure_section_folder(slug)
-
-        up.seek(0)
-        raw = up.getbuffer() if hasattr(up, "getbuffer") else up.read()
-        raw = bytes(raw)
-
-        stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
-        base, ext = os.path.splitext(up.name or "file")
-        safe = "".join(ch if (ch.isalnum() or ch in ("_", "-", ".", " ")) else "_" for ch in base)
-        safe = "_".join(safe.split())
-        fname = f"{stamp}_{safe}{ext.lower()}"
-
-        media = MediaIoBaseUpload(
-            io.BytesIO(raw),
-            mimetype=up.type or "application/octet-stream",
-            resumable=False,
-        )
-
-        file_meta = {"name": fname, "parents": [folder_id]}
-        created = drive_service.files().create(body=file_meta, media_body=media, fields="id").execute()
-        return created["id"]
-
-    except Exception as e:
-        return "__ERROR__:" + str(e)
+        mapping = st.secrets.get("DRIVE_SECTION_FOLDERS", {})
+        if isinstance(mapping, dict):
+            val = str(mapping.get(slug, "")).strip()
+            return val or None
+        return None
+    except Exception:
+        return None
 
 
-def delete_file(file_id: str) -> None:
-    drive_service.files().delete(fileId=file_id).execute()
-
-
-# ================= Sidebar: اختيار القسم + كلمة المرور =========
+# ================= Sidebar (يظهر دائمًا حتى لو فشل Drive) =================
 st.sidebar.markdown("### اختر القسم")
 sec_ar = st.sidebar.selectbox("اختر", list(SECTIONS_AR2EN.keys()))
 slug = SECTIONS_AR2EN[sec_ar]
 
-sec_secret = st.secrets.get(SECRET_KEYS.get(slug, ""), "")
-
 st.sidebar.markdown("### صلاحيات القسم")
-pw = st.sidebar.text_input("كلمة المرور (للرفع والحذف فقط)", type="password", key=f"pw_{slug}")
+sec_secret = st.secrets.get(SECRET_KEYS.get(slug, ""), "")
+pw = st.sidebar.text_input(
+    "كلمة المرور (للرفع والحذف فقط)",
+    type="password",
+    key=f"pw_{slug}",
+)
 
 if st.sidebar.button("دخول", key=f"enter_{slug}"):
-    if pw and sec_secret and pw.strip() == sec_secret.strip():
+    if pw and sec_secret and pw.strip() == str(sec_secret).strip():
         st.session_state[auth_key(slug)] = True
         st.sidebar.success("تم التحقق من كلمة المرور.")
     else:
@@ -339,39 +225,161 @@ if st.sidebar.button("دخول", key=f"enter_{slug}"):
         st.sidebar.error("كلمة المرور غير صحيحة.")
 
 
+# ================= Google Drive Setup =================
+DRIVE_ROOT_FOLDER_ID = str(st.secrets.get("DRIVE_ROOT_FOLDER_ID", "")).strip()
+
+drive_ready = True
+drive_error_msg = ""
+
+if not DRIVE_ROOT_FOLDER_ID:
+    drive_ready = False
+    drive_error_msg = "⚠️ لم يتم ضبط DRIVE_ROOT_FOLDER_ID في Secrets."
+
+
+@st.cache_resource
+def get_drive_service():
+    sa_info = dict(st.secrets["google_service_account"])
+
+    # إصلاح private_key لو كان فيه \n كنص
+    pk = normalize_private_key(str(sa_info.get("private_key", "")))
+    sa_info["private_key"] = pk
+
+    # تحقق قبل إنشاء الاعتماد
+    required = ["client_email", "token_uri", "private_key", "project_id", "type"]
+    missing = [k for k in required if not str(sa_info.get(k, "")).strip()]
+    if missing:
+        raise ValueError(f"Secrets ناقصة أو غير صحيحة: {', '.join(missing)}")
+
+    creds = service_account.Credentials.from_service_account_info(
+        sa_info,
+        scopes=["https://www.googleapis.com/auth/drive"],
+    )
+    return build("drive", "v3", credentials=creds)
+
+
+drive_service = None
+if drive_ready:
+    try:
+        drive_service = get_drive_service()
+    except Exception as e:
+        drive_ready = False
+        drive_error_msg = (
+            "❌ تعذر تشغيل Google Drive بسبب مشكلة في Secrets (غالبًا private_key).\n\n"
+            f"التفاصيل المختصرة: {type(e).__name__}: {e}\n\n"
+            "✅ تأكد أن private_key داخل Secrets يحتوي BEGIN/END وأن الأسطر صحيحة.\n"
+            "✅ إذا كان المفتاح يحتوي \\n فالكود سيحوله تلقائيًا، لكن يجب أن يكون كاملًا بدون نقص."
+        )
+
+
+# ================= Core Drive Functions =================
+def list_files_in_folder(folder_id: str) -> List[Tuple[str, int, str]]:
+    q = f"'{folder_id}' in parents and trashed = false"
+    res = (
+        drive_service.files()
+        .list(
+            q=q,
+            fields="files(id,name,size,modifiedTime)",
+            orderBy="modifiedTime desc",
+            spaces="drive",
+        )
+        .execute()
+    )
+    items = res.get("files", [])
+    out: List[Tuple[str, int, str]] = []
+    for f in items:
+        out.append((f.get("name", "file"), int(f.get("size", 0) or 0), f["id"]))
+    return out
+
+
+def download_file_content(file_id: str) -> bytes:
+    request = drive_service.files().get_media(fileId=file_id)
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    fh.seek(0)
+    return fh.read()
+
+
+def save_upload_to_folder(folder_id: str, up) -> str:
+    up.seek(0)
+    raw = up.getbuffer() if hasattr(up, "getbuffer") else up.read()
+    raw = bytes(raw)
+
+    stamp = datetime.now().strftime("%H%M%S-%Y%m%d")
+    base, ext = os.path.splitext(up.name or "file")
+    safe = "".join(ch if (ch.isalnum() or ch in ("_", "-", ".", " ")) else "_" for ch in base)
+    safe = "_".join(safe.split())
+    fname = f"{stamp}_{safe}{ext.lower()}"
+
+    media = MediaIoBaseUpload(
+        io.BytesIO(raw),
+        mimetype=up.type or "application/octet-stream",
+        resumable=False,
+    )
+
+    file_meta = {"name": fname, "parents": [folder_id]}
+    created = drive_service.files().create(body=file_meta, media_body=media, fields="id").execute()
+    return created["id"]
+
+
+def delete_file(file_id: str) -> None:
+    drive_service.files().delete(fileId=file_id).execute()
+
+
+# ================= UI: Drive status =================
+if not drive_ready:
+    st.error(drive_error_msg)
+    st.info(
+        "ملاحظة مهمة جدًا: يجب مشاركة مجلد IMS-Storage (وكل مجلدات الأقسام داخله) مع بريد حساب الخدمة:\n\n"
+        f"**{st.secrets.get('google_service_account', {}).get('client_email','(غير موجود)')}**\n\n"
+        "صلاحية: Viewer للتحميل، وEditor إذا تريد رفع/حذف."
+    )
+    st.stop()
+
+
+# ================= Determine current section folder =================
+folder_id = get_section_folder_id_from_secrets(slug)
+if not folder_id:
+    st.error(
+        "⚠️ لم يتم العثور على Folder ID لهذا القسم داخل Secrets.\n\n"
+        "يرجى إضافة:\n"
+        "[DRIVE_SECTION_FOLDERS]\n"
+        f"{slug} = \"FOLDER_ID\""
+    )
+    st.stop()
+
+
 # ================= Files (قراءة للجميع) =========
 st.markdown("### الملفات الحالية (متاحة للقراءة والتحميل للجميع) 📂")
 
-# زر تحديث آمن بدل rerun القديم
-if st.button("تحديث القائمة 🔄"):
+# زر تحديث آمن
+if st.button("🔄 تحديث القائمة", key="refresh_list"):
     st.rerun()
 
-files = list_files(slug)
+files = list_files_in_folder(folder_id)
 if not files:
     st.info("لا توجد ملفات بعد في هذا القسم.")
 else:
-    for i, (nm, sz, fid, mt) in enumerate(files, start=1):
-        c1, c2, c3 = st.columns([5, 2, 1])
-
+    for i, (nm, sz, fid) in enumerate(files, start=1):
+        c1, c2, c3 = st.columns([6, 2, 1])
         with c1:
             st.markdown(
                 f"**#{i} — {nm}**  <span class='muted'>({human_size(sz)})</span>",
                 unsafe_allow_html=True,
             )
-
         with c2:
             try:
-                content = download_file_content(fid, mt)
-                download_name = suggest_download_name(nm, mt)
+                content = download_file_content(fid)
                 st.download_button(
                     "تنزيل",
                     data=content,
-                    file_name=download_name,
+                    file_name=nm,
                     key=f"dl_{slug}_{i}",
                 )
             except Exception as e:
                 st.caption(f"تعذّر تنزيل الملف: {e}")
-
         with c3:
             if st.session_state.get(auth_key(slug), False):
                 if st.button("حذف", key=f"rm_{slug}_{i}"):
@@ -388,15 +396,23 @@ st.markdown("### لوحة التحكم (رفع الملفات للقسم الم�
 
 if st.session_state.get(auth_key(slug), False):
     st.markdown("#### رفع ملف جديد إلى هذا القسم (Google Drive)")
-    up = st.file_uploader("اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)", type=None, key=f"uploader_{slug}")
+    up = st.file_uploader(
+        "اختر ملفًا (PDF, DOCX, XLSX, PNG, JPG, ...)",
+        type=None,
+        key=f"uploader_{slug}",
+    )
     if up is not None:
-        res = save_upload(slug, up)
-        if isinstance(res, str) and res.startswith("__ERROR__:"):
-            st.error("تعذّر حفظ الملف: " + res.replace("__ERROR__:", ""))
-        else:
+        try:
+            save_upload_to_folder(folder_id, up)
             st.success("✅ تم رفع الملف بنجاح إلى Google Drive.")
             st.rerun()
+        except Exception as e:
+            st.error(f"تعذّر رفع الملف: {e}")
 else:
     st.info("لرفع أو حذف الملفات في هذا القسم، أدخل كلمة المرور الصحيحة من القائمة الجانبية.")
 
-st.markdown("<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>", unsafe_allow_html=True)
+
+st.markdown(
+    "<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>",
+    unsafe_allow_html=True,
+)
