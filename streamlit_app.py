@@ -405,10 +405,11 @@ def download_file_content(file_id: str, file_name: str, mime_type: str) -> bytes
     
     except Exception as e:
         # إذا فشل التصدير، حاول تنزيل الملف بشكل عادي
-        if is_google_doc:
+        if 'is_google_doc' in locals() and is_google_doc:
             try:
                 st.warning(f"⚠️ تعذر تصدير ملف Google Docs، جاري تنزيل المعلومات...")
-                return b"Google Docs file - يحتاج إلى فتح في متصفح"
+                # إرجاع رسالة توضيحية
+                return b"Google Docs file - use browser to open"
             except:
                 pass
         
@@ -508,7 +509,7 @@ else:
                 content = download_file_content(fid, nm, mime_type)
                 if content:
                     # تجنب إنشاء زر تنزيل للملفات الفارغة
-                    if len(content) > 0 and content != b"Google Docs file - يحتاج إلى فتح في متصفح":
+                    if len(content) > 0 and content != b"Google Docs file - use browser to open":
                         st.download_button(
                             "⬇️ تنزيل",
                             data=content,
