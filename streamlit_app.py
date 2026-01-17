@@ -156,26 +156,49 @@ def normalize_private_key(raw_key: str) -> str:
     if not raw_key:
         return ""
     
-    key = raw_key.strip().strip('"').strip("'")
+    # تنظيف النص الأساسي
+    key = raw_key.strip()
     
+    # إزالة الاقتباسات الزائدة
+    key = key.strip('"').strip("'")
+    
+    # تحويل \n النصي إلى أسطر حقيقية (إذا كان في سطر واحد)
     if "\\n" in key and "\n" not in key:
         key = key.replace("\\n", "\n")
     
-    if "BEGIN PRIVATE KEY" not in key:
-        return ""
+    # ضمان وجود BEGIN/END
+    if "BEGIN PRIVATE KEY" not in key or "END PRIVATE KEY" not in key:
+        # إضافة BEGIN/END إذا كانت مفقودة
+        if "-----" not in key:
+            key = f"-----BEGIN PRIVATE KEY-----\n{key}\n-----END PRIVATE KEY-----"
     
+    # تنظيف الأسطر
     key = key.replace("\r\n", "\n").replace("\r", "\n").strip()
     
     return key
 
 def get_section_folder_id_from_secrets(slug: str) -> Optional[str]:
+    """
+    يحاول قراءة معرف المجلد من DRIVE_SECTION_FOLDERS
+    إذا لم يكن موجودًا، يستخدم DRIVE_ROOT_FOLDER_ID كمجلد افتراضي
+    """
     try:
-        mapping = st.secrets.get("DRIVE_SECTION_FOLDERS", {})
-        if isinstance(mapping, dict):
-            val = str(mapping.get(slug, "")).strip()
-            return val if val else None
+        # جرب قراءة DRIVE_SECTION_FOLDERS أولاً
+        if "DRIVE_SECTION_FOLDERS" in st.secrets:
+            mapping = st.secrets.get("DRIVE_SECTION_FOLDERS", {})
+            if isinstance(mapping, dict):
+                val = str(mapping.get(slug, "")).strip()
+                if val:
+                    return val
+        
+        # إذا لم يكن هناك قسم محدد، استخدم المجلد الجذري
+        DRIVE_ROOT_FOLDER_ID = str(st.secrets.get("DRIVE_ROOT_FOLDER_ID", "")).strip()
+        if DRIVE_ROOT_FOLDER_ID:
+            return DRIVE_ROOT_FOLDER_ID
+        
         return None
-    except Exception:
+    except Exception as e:
+        st.warning(f"خطأ في قراءة معرف المجلد: {e}")
         return None
 
 # ================= Sidebar =================
@@ -184,7 +207,12 @@ sec_ar = st.sidebar.selectbox("اختر", list(SECTIONS_AR2EN.keys()))
 slug = SECTIONS_AR2EN[sec_ar]
 
 st.sidebar.markdown("### صلاحيات القسم")
-sec_secret = st.secrets.get(SECRET_KEYS.get(slug, ""), "")
+# الحصول على كلمة المرور من SECRET_KEYS
+password_key = SECRET_KEYS.get(slug, "")
+sec_secret = ""
+if password_key:
+    sec_secret = st.secrets.get(password_key, "")
+
 pw = st.sidebar.text_input(
     "كلمة المرور (للرفع والحذف فقط)",
     type="password",
@@ -200,25 +228,30 @@ if st.sidebar.button("دخول", key=f"enter_{slug}"):
         st.sidebar.error("كلمة المرور غير صحيحة.")
 
 # ================= Google Drive Setup =================
-DRIVE_ROOT_FOLDER_ID = str(st.secrets.get("DRIVE_ROOT_FOLDER_ID", "")).strip()
-
-drive_ready = True
-drive_error_msg = ""
-
-if not DRIVE_ROOT_FOLDER_ID:
-    drive_ready = False
-    drive_error_msg = "⚠️ لم يتم ضبط DRIVE_ROOT_FOLDER_ID في Secrets."
-    st.warning("TEST DRIVE_ROOT_FOLDER_ID:")
-    st.write(DRIVE_ROOT_FOLDER_ID or "(غير موجود)")
+# قراءة جميع مفاتيح حساب الخدمة من st.secrets مباشرة
+# لأنها في المستوى العلوي وليست داخل [google_service_account]
 
 @st.cache_resource
 def get_drive_service():
     try:
-        # تحقق من وجود google_service_account في Secrets
-        if "google_service_account" not in st.secrets:
-            raise KeyError("لم يتم العثور على 'google_service_account' في Secrets.")
+        # بناء معلومات حساب الخدمة من المفاتيح العلوية
+        sa_info = {
+            "type": st.secrets.get("type", ""),
+            "project_id": st.secrets.get("project_id", ""),
+            "private_key_id": st.secrets.get("private_key_id", ""),
+            "private_key": st.secrets.get("private_key", ""),
+            "client_email": st.secrets.get("client_email", ""),
+            "client_id": st.secrets.get("client_id", ""),
+            "auth_uri": st.secrets.get("auth_uri", "https://accounts.google.com/o/oauth2/auth"),
+            "token_uri": st.secrets.get("token_uri", "https://oauth2.googleapis.com/token"),
+            "auth_provider_x509_cert_url": st.secrets.get("auth_provider_x509_cert_url", "https://www.googleapis.com/oauth2/v1/certs"),
+            "client_x509_cert_url": st.secrets.get("client_x509_cert_url", ""),
+        }
         
-        sa_info = dict(st.secrets["google_service_account"])
+        # إضافة universe_domain إذا كان موجودًا
+        universe_domain = st.secrets.get("universe_domain", "")
+        if universe_domain:
+            sa_info["universe_domain"] = universe_domain
         
         # إصلاح private_key
         pk = normalize_private_key(str(sa_info.get("private_key", "")))
@@ -227,7 +260,7 @@ def get_drive_service():
         sa_info["private_key"] = pk
         
         # تحقق من المفاتيح المطلوبة
-        required = ["type", "project_id", "private_key_id", "client_email", "token_uri"]
+        required = ["type", "project_id", "private_key_id", "client_email", "private_key"]
         missing = [k for k in required if not str(sa_info.get(k, "")).strip()]
         if missing:
             raise ValueError(f"مفاتيح Secrets ناقصة: {', '.join(missing)}")
@@ -241,28 +274,43 @@ def get_drive_service():
         st.error(f"خطأ في تهيئة خدمة Google Drive: {str(e)}")
         raise
 
+# اختبار الاتصال بـ Google Drive
 drive_service = None
-if drive_ready:
-    try:
-        drive_service = get_drive_service()
-        st.success("✅ تم الاتصال بـ Google Drive بنجاح.")
-    except Exception as e:
-        drive_ready = False
-        drive_error_msg = f"""
-        ❌ تعذر تشغيل Google Drive بسبب مشكلة في Secrets.
-        
-        **الخطأ:** {type(e).__name__}: {str(e)}
-        
-        **حلول مقترحة:**
-        1. تأكد أن ملف secrets.toml يحتوي على قسم [google_service_account] مع جميع المفاتيح المطلوبة
-        2. تأكد أن private_key يحتوي على BEGIN PRIVATE KEY و END PRIVATE KEY
-        3. إذا كان المفتاح يحتوي على \\n داخل TOML، تأكد من استخدام ثلاث علامات اقتباس للسلاسل متعددة الأسطر
-        4. تأكد من مشاركة مجلد IMS-Storage مع بريد حساب الخدمة
-        """
+drive_ready = False
+drive_error_msg = ""
+
+try:
+    drive_service = get_drive_service()
+    
+    # اختبار الاتصال بمحاولة قراءة المجلد الجذري
+    DRIVE_ROOT_FOLDER_ID = str(st.secrets.get("DRIVE_ROOT_FOLDER_ID", "")).strip()
+    if not DRIVE_ROOT_FOLDER_ID:
+        drive_error_msg = "⚠️ لم يتم ضبط DRIVE_ROOT_FOLDER_ID في Secrets."
+    else:
+        # محاولة قراءة المجلد للتأكد من الصلاحيات
+        try:
+            folder = drive_service.files().get(fileId=DRIVE_ROOT_FOLDER_ID, fields="id,name").execute()
+            drive_ready = True
+            st.sidebar.success("✅ تم الاتصال بـ Google Drive بنجاح.")
+        except Exception as e:
+            drive_error_msg = f"❌ لا يمكن الوصول إلى المجلد الجذري: {str(e)}"
+except Exception as e:
+    drive_error_msg = f"""
+    ❌ تعذر تشغيل Google Drive بسبب مشكلة في Secrets.
+    
+    **الخطأ:** {type(e).__name__}: {str(e)}
+    
+    **حلول مقترحة:**
+    1. تأكد أن جميع مفاتيح حساب الخدمة موجودة في secrets.toml
+    2. تأكد أن private_key صحيح ويحتوي على BEGIN PRIVATE KEY و END PRIVATE KEY
+    3. تأكد من مشاركة مجلد IMS-Storage مع بريد حساب الخدمة:
+       **{st.secrets.get('client_email', '(غير موجود)')}**
+    4. الصلاحية المطلوبة: Editor للرفع والحذف
+    """
 
 # ================= Core Drive Functions =================
 def list_files_in_folder(folder_id: str) -> List[Tuple[str, int, str]]:
-    if not drive_service:
+    if not drive_service or not folder_id:
         return []
     try:
         q = f"'{folder_id}' in parents and trashed = false"
@@ -340,21 +388,26 @@ def delete_file(file_id: str) -> None:
 # ================= UI: Drive status =================
 if not drive_ready:
     st.error(drive_error_msg)
-    if "google_service_account" in st.secrets:
-        client_email = st.secrets["google_service_account"].get("client_email", "(غير موجود)")
-        st.info(
-            f"""
-            **ملاحظة مهمة:** يجب مشاركة مجلد IMS-Storage مع بريد حساب الخدمة:
-            
-            **{client_email}**
-            
-            **الصلاحيات المطلوبة:**
-            - **Viewer:** للتحميل فقط
-            - **Editor:** للرفع والحذف
-            
-            **تأكد من:** مشاركة مجلد IMS-Storage وجميع المجلدات الفرعية مع هذا البريد الإلكتروني.
-            """
-        )
+    
+    # عرض معلومات حساب الخدمة للمساعدة في التصحيح
+    with st.expander("معلومات حساب الخدمة للمساعدة في التصحيح"):
+        st.write("**client_email:**", st.secrets.get("client_email", "(غير موجود)"))
+        st.write("**project_id:**", st.secrets.get("project_id", "(غير موجود)"))
+        st.write("**DRIVE_ROOT_FOLDER_ID:**", st.secrets.get("DRIVE_ROOT_FOLDER_ID", "(غير موجود)"))
+        
+        # عرض جزء من private_key للتأكد من صحته
+        private_key_preview = str(st.secrets.get("private_key", ""))[:100] + "..."
+        st.write("**private_key (معاينة):**", private_key_preview)
+    
+    st.info(
+        f"""
+        **ملاحظة مهمة:** يجب مشاركة مجلد IMS-Storage مع بريد حساب الخدمة:
+        
+        **{st.secrets.get('client_email', '(غير موجود)')}**
+        
+        **الصلاحيات المطلوبة:** Editor
+        """
+    )
     st.stop()
 
 # ================= Determine current section folder =================
@@ -362,14 +415,17 @@ folder_id = get_section_folder_id_from_secrets(slug)
 if not folder_id:
     st.error(
         f"""
-        ⚠️ لم يتم العثور على Folder ID للقسم '{sec_ar}' داخل Secrets.
+        ⚠️ لم يتم العثور على Folder ID للقسم '{sec_ar}'.
         
-        **يرجى إضافة المفتاح التالي إلى secrets.toml:**
+        **الحلول المقترحة:**
+        1. إضافة معرف المجلد إلى secrets.toml:
         
         [DRIVE_SECTION_FOLDERS]
         {slug} = "FOLDER_ID_HERE"
         
-        **حيث:** FOLDER_ID_HERE هو معرف المجلد في Google Drive لهذا القسم.
+        2. أو تأكد من ضبط DRIVE_ROOT_FOLDER_ID بشكل صحيح.
+        
+        **DRIVE_ROOT_FOLDER_ID الحالي:** {st.secrets.get("DRIVE_ROOT_FOLDER_ID", "(غير موجود)")}
         """
     )
     st.stop()
