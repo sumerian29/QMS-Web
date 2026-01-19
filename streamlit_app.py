@@ -159,7 +159,7 @@ def check_secrets():
     
     # فحص مفاتيح حساب الخدمة
     for key in required_service_keys:
-        if key not in st.secrets or not str(st.secrets.get(key, "")).strip():
+        if key not in st.secrets["google_service_account"] or not str(st.secrets["google_service_account"].get(key, "")).strip():
             issues.append(f"❌ {key} غير موجود أو فارغ")
     
     # فحص DRIVE_ROOT_FOLDER_ID
@@ -254,30 +254,20 @@ def get_drive_service():
     """إنشاء وتوصيل خدمة Google Drive"""
     try:
         # التحقق من الأسرار أولاً
-        required_keys = ["type", "project_id", "private_key_id", "private_key", "client_email"]
-        for key in required_keys:
-            if key not in st.secrets:
-                raise ValueError(f"المفتاح '{key}' غير موجود في الأسرار")
+        if "google_service_account" not in st.secrets:
+            raise ValueError("القسم 'google_service_account' غير موجود في الأسرار")
         
-        # بناء معلومات حساب الخدمة
-        service_account_info = {
-            "type": st.secrets["type"],
-            "project_id": st.secrets["project_id"],
-            "private_key_id": st.secrets["private_key_id"],
-            "private_key": normalize_private_key(st.secrets["private_key"]),
-            "client_email": st.secrets["client_email"],
-            "token_uri": st.secrets.get("token_uri", "https://oauth2.googleapis.com/token"),
-        }
+        service_account_info = dict(st.secrets["google_service_account"])
         
-        # إضافة المفاتيح الاختيارية إذا كانت موجودة
-        optional_keys = ["client_id", "auth_uri", "auth_provider_x509_cert_url", 
-                        "client_x509_cert_url", "universe_domain"]
-        for key in optional_keys:
-            if key in st.secrets:
-                service_account_info[key] = st.secrets[key]
+        # الحصول على client_email لرسائل الخطأ
+        client_email = service_account_info.get("client_email", "unknown")
+        
+        # تطبيع المفتاح الخاص
+        if "private_key" in service_account_info:
+            service_account_info["private_key"] = normalize_private_key(service_account_info["private_key"])
         
         # التحقق من صحة المفتاح الخاص
-        private_key = service_account_info["private_key"]
+        private_key = service_account_info.get("private_key", "")
         if not private_key or "-----BEGIN PRIVATE KEY-----" not in private_key:
             raise ValueError("المفتاح الخاص غير صالح أو لا يحتوي على BEGIN PRIVATE KEY")
         
@@ -293,56 +283,67 @@ def get_drive_service():
         # اختبار الاتصال
         try:
             about = service.about().get(fields="user,storageQuota").execute()
-            user_email = about.get("user", {}).get("emailAddress", "غير معروف")
-            st.sidebar.success(f"✅ متصل بـ: {user_email}")
+            st.sidebar.success(f"✅ متصل بـ Google Drive")
+            return service
         except Exception as test_error:
             st.sidebar.warning(f"⚠️ اختبار الاتصال: {str(test_error)[:100]}")
-        
-        return service
+            return service
         
     except HttpError as http_err:
-        error_details = json.loads(http_err.content.decode('utf-8'))
+        error_details = json.loads(http_err.content.decode('utf-8')) if hasattr(http_err, 'content') else {}
         error_msg = error_details.get('error_description', str(http_err))
-        st.error(f"❌ خطأ HTTP في الاتصال بـ Google Drive: {error_msg}")
-        return None
-    except Exception as e:
-        st.error(f"❌ خطأ في الاتصال بـ Google Drive: {str(e)}")
-        return None
-
-# محاولة الاتصال بـ Google Drive
-drive_service = None
-try:
-    drive_service = get_drive_service()
-    if not drive_service:
-        st.error("""
-        ❌ تعذر الاتصال بـ Google Drive
+        st.error(f"""
+        ❌ خطأ في الاتصال بـ Google Drive: {error_msg}
         
         **الأسباب المحتملة:**
         1. private_key غير صالح (Invalid JWT Signature)
-        2. لم يتم تفعيل Google Drive API للمشروع
+        2. Google Drive API لم يتم تفعيل للمشروع
         3. لم يتم مشاركة المجلد مع حساب الخدمة
         4. انتهت صلاحية المفتاح
         
         **الحلول المقترحة:**
         1. أنشئ مفتاح خدمة جديد من Google Cloud Console
-        2. تأكد من تفعيل Google Drive API
-        3. تأكد من مشاركة المجلد مع: ims-storage-service-94@cryptic-woods-445905-f0.iam.gserviceaccount.com
+        2. تأكد من تفعيل Google Drive API للمشروع
+        3. تأكد من مشاركة المجلد مع: {client_email}
+        4. تأكد من أن DRIVE_ROOT_FOLDER_ID صحيح
         """)
+        return None
+    except Exception as e:
+        st.error(f"""
+        ❌ خطأ في الاتصال بـ Google Drive: {str(e)}
         
-        with st.expander("🛠 معلومات التصحيح"):
-            st.write("### المفاتيح الموجودة في الأسرار:")
-            try:
-                for key in st.secrets.keys():
-                    value = str(st.secrets.get(key, ""))[:50]
+        **التحقق من:**
+        1. صحة المفتاح الخاص
+        2. تفعيل Google Drive API
+        3. مشاركة المجلد مع حساب الخدمة
+        """)
+        return None
+
+# محاولة الاتصال بـ Google Drive
+drive_service = get_drive_service()
+if not drive_service:
+    st.error("❌ تعذر الاتصال بـ Google Drive. الرجاء التحقق من الأسرار وإعدادات المشروع.")
+    
+    with st.expander("🛠 معلومات التصحيح"):
+        st.write("### المفاتيح الموجودة في الأسرار:")
+        try:
+            # عرض المفاتيح الأساسية
+            if "google_service_account" in st.secrets:
+                st.write("**google_service_account:**")
+                for key in st.secrets["google_service_account"].keys():
+                    value = str(st.secrets["google_service_account"].get(key, ""))
                     if "private" in key.lower():
-                        value = f"{value[:30]}... [مخفى]"
+                        value = f"{value[:50]}... [مخفى]"
+                    st.write(f"  - **{key}**: {value[:100]}")
+            
+            # عرض مفاتيح أخرى
+            for key in st.secrets.keys():
+                if key != "google_service_account":
+                    value = str(st.secrets.get(key, ""))[:100]
                     st.write(f"**{key}**: {value}")
-            except:
-                st.write("لا يمكن قراءة المفاتيح")
-        
-        st.stop()
-except Exception as e:
-    st.error(f"❌ فشل تهيئة Google Drive: {str(e)}")
+        except Exception as e:
+            st.write(f"لا يمكن قراءة المفاتيح: {str(e)}")
+    
     st.stop()
 
 # ================= Drive Functions =================
@@ -355,7 +356,7 @@ def list_files_in_folder(folder_id: str):
         query = f"'{folder_id}' in parents and trashed = false"
         results = drive_service.files().list(
             q=query,
-            fields="files(id, name, size, mimeType, modifiedTime)",
+            fields="files(id, name, size, mimeType, modifiedTime, webViewLink)",
             orderBy="modifiedTime desc",
             pageSize=100
         ).execute()
@@ -372,8 +373,46 @@ def download_file_content(file_id: str, file_name: str = None):
         return None
     
     try:
-        # محاولة تنزيل الملف العادي أولاً
-        request = drive_service.files().get_media(fileId=file_id)
+        # الحصول على معلومات الملف أولاً
+        file_info = drive_service.files().get(
+            fileId=file_id, 
+            fields="mimeType,name"
+        ).execute()
+        
+        mime_type = file_info.get('mimeType', '')
+        original_name = file_info.get('name', file_name or 'file')
+        
+        # إذا كان ملف Google (مستندات، جداول، عروض)
+        if mime_type.startswith('application/vnd.google-apps.'):
+            # تحديد تنسيق التصدير
+            export_type = None
+            if mime_type == 'application/vnd.google-apps.document':
+                export_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                if not original_name.endswith('.docx'):
+                    original_name = f"{original_name}.docx"
+            elif mime_type == 'application/vnd.google-apps.spreadsheet':
+                export_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                if not original_name.endswith('.xlsx'):
+                    original_name = f"{original_name}.xlsx"
+            elif mime_type == 'application/vnd.google-apps.presentation':
+                export_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+                if not original_name.endswith('.pptx'):
+                    original_name = f"{original_name}.pptx"
+            else:
+                export_type = 'application/pdf'
+                if not original_name.endswith('.pdf'):
+                    original_name = f"{original_name}.pdf"
+            
+            # تصدير الملف
+            request = drive_service.files().export_media(
+                fileId=file_id,
+                mimeType=export_type
+            )
+        else:
+            # تنزيل الملف العادي
+            request = drive_service.files().get_media(fileId=file_id)
+        
+        # تنزيل المحتوى
         file_handle = io.BytesIO()
         downloader = MediaIoBaseDownload(file_handle, request)
         done = False
@@ -382,64 +421,11 @@ def download_file_content(file_id: str, file_name: str = None):
             status, done = downloader.next_chunk()
         
         file_handle.seek(0)
-        return file_handle.getvalue()
+        return file_handle.getvalue(), original_name
         
-    except HttpError as e:
-        # إذا كان الملف من نوع Google Docs، حاول تصديره
-        if e.resp.status == 403 and 'export' in str(e):
-            try:
-                # الحصول على نوع MIME للملف
-                file_info = drive_service.files().get(
-                    fileId=file_id, 
-                    fields="mimeType"
-                ).execute()
-                
-                mime_type = file_info.get('mimeType', '')
-                
-                # تحديد تنسيق التصدير المناسب
-                export_type = None
-                if 'document' in mime_type:
-                    export_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                    if file_name and not file_name.endswith('.docx'):
-                        file_name = file_name.rsplit('.', 1)[0] + '.docx'
-                elif 'spreadsheet' in mime_type:
-                    export_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                    if file_name and not file_name.endswith('.xlsx'):
-                        file_name = file_name.rsplit('.', 1)[0] + '.xlsx'
-                elif 'presentation' in mime_type:
-                    export_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-                    if file_name and not file_name.endswith('.pptx'):
-                        file_name = file_name.rsplit('.', 1)[0] + '.pptx'
-                else:
-                    export_type = 'application/pdf'
-                    if file_name and not file_name.endswith('.pdf'):
-                        file_name = file_name.rsplit('.', 1)[0] + '.pdf'
-                
-                # تصدير الملف
-                request = drive_service.files().export_media(
-                    fileId=file_id,
-                    mimeType=export_type
-                )
-                
-                file_handle = io.BytesIO()
-                downloader = MediaIoBaseDownload(file_handle, request)
-                done = False
-                
-                while not done:
-                    status, done = downloader.next_chunk()
-                
-                file_handle.seek(0)
-                return file_handle.getvalue()
-                
-            except Exception as export_error:
-                st.error(f"❌ تعذر تصدير الملف: {str(export_error)[:200]}")
-                return None
-        else:
-            st.error(f"❌ خطأ في تنزيل الملف: {str(e)[:200]}")
-            return None
     except Exception as e:
-        st.error(f"❌ خطأ غير متوقع في التنزيل: {str(e)[:200]}")
-        return None
+        st.error(f"❌ خطأ في تنزيل الملف: {str(e)[:200]}")
+        return None, None
 
 def upload_file_to_folder(folder_id: str, file_obj):
     """رفع ملف إلى مجلد"""
@@ -471,7 +457,7 @@ def upload_file_to_folder(folder_id: str, file_obj):
         file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id, name'
+            fields='id, name, webViewLink'
         ).execute()
         
         return file
@@ -522,6 +508,7 @@ else:
         file_name = file.get('name', 'بدون اسم')
         file_size = file.get('size', 0)
         mime_type = file.get('mimeType', '')
+        web_link = file.get('webViewLink', '')
         
         # إنشاء صف للملف
         col1, col2, col3 = st.columns([3, 1, 1])
@@ -531,37 +518,45 @@ else:
             icon = "📄"
             if 'google-apps' in mime_type:
                 icon = "🌐"
+                file_name_display = f"{file_name} (ملف Google)"
             elif 'image' in mime_type:
                 icon = "🖼️"
+                file_name_display = file_name
             elif 'pdf' in mime_type:
                 icon = "📕"
+                file_name_display = file_name
             elif 'document' in mime_type:
                 icon = "📝"
+                file_name_display = file_name
             elif 'spreadsheet' in mime_type:
                 icon = "📊"
+                file_name_display = file_name
             elif 'presentation' in mime_type:
                 icon = "📽️"
+                file_name_display = file_name
+            else:
+                file_name_display = file_name
             
             # عرض معلومات الملف
-            st.markdown(f"{icon} **{file_name}**")
+            st.markdown(f"{icon} **{file_name_display}**")
             if file_size:
                 st.caption(f"الحجم: {human_size(file_size)}")
-            if 'google-apps' in mime_type:
-                st.caption("ملف Google (يتم تصديره تلقائياً)")
+            if web_link:
+                st.caption(f"[🔗 فتح في Google Drive]({web_link})")
         
         with col2:
             # زر التنزيل
-            if st.button("⬇️ تنزيل", key=f"download_{file_id}"):
+            if st.button("⬇️ تنزيل", key=f"download_{file_id}_{i}"):
                 with st.spinner("جاري تحضير الملف للتنزيل..."):
-                    file_content = download_file_content(file_id, file_name)
+                    file_content, download_name = download_file_content(file_id, file_name)
                     if file_content:
                         # تقديم الملف للتنزيل
                         st.download_button(
                             label="💾 حفظ الملف",
                             data=file_content,
-                            file_name=file_name,
-                            mime=mime_type,
-                            key=f"save_{file_id}"
+                            file_name=download_name,
+                            mime="application/octet-stream",
+                            key=f"save_{file_id}_{i}"
                         )
                     else:
                         st.error("❌ تعذر تحضير الملف للتنزيل")
@@ -569,12 +564,14 @@ else:
         with col3:
             # زر الحذف (فقط للمستخدمين المصادقين)
             if st.session_state.get(f"auth_{section_slug}", False):
-                if st.button("🗑️", key=f"delete_{file_id}", help="حذف الملف"):
+                if st.button("🗑️", key=f"delete_{file_id}_{i}", help="حذف الملف"):
                     if delete_drive_file(file_id):
                         st.success("✅ تم حذف الملف بنجاح")
                         st.rerun()
             else:
                 st.caption("🔒 يتطلب مصادقة")
+        
+        st.divider()
 
 # ================= Upload Section =================
 st.markdown("---")
@@ -586,7 +583,7 @@ if st.session_state.get(f"auth_{section_slug}", False):
     uploaded_file = st.file_uploader(
         "اختر ملفًا للرفع",
         type=['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 
-              'jpg', 'jpeg', 'png', 'txt', 'zip'],
+              'jpg', 'jpeg', 'png', 'txt', 'zip', 'csv', 'rtf'],
         key=f"uploader_{section_slug}"
     )
     
@@ -594,12 +591,15 @@ if st.session_state.get(f"auth_{section_slug}", False):
         # عرض معاينة للملف
         st.write(f"**الملف المحدد:** {uploaded_file.name}")
         st.write(f"**الحجم:** {human_size(uploaded_file.size)}")
+        st.write(f"**النوع:** {uploaded_file.type}")
         
         if st.button("📤 رفع الملف إلى Google Drive", key=f"upload_btn_{section_slug}"):
             with st.spinner("جاري رفع الملف..."):
                 result = upload_file_to_folder(specific_folder_id, uploaded_file)
                 if result:
                     st.success(f"✅ تم رفع الملف بنجاح: {result.get('name')}")
+                    if result.get('webViewLink'):
+                        st.markdown(f"[🔗 فتح الملف في Drive]({result.get('webViewLink')})")
                     st.rerun()
                 else:
                     st.error("❌ فشل رفع الملف")
