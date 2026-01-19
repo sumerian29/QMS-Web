@@ -20,7 +20,7 @@ from googleapiclient.errors import HttpError
 
 # ================= App setup =================
 st.set_page_config(page_title="IMS — Thi Qar Oil Company", layout="wide")
-
+st.sidebar.write(list(st.secrets.keys()))
 # ================= Styling ===================
 st.markdown(
     """
@@ -572,3 +572,4 @@ st.markdown(
     "<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>",
     unsafe_allow_html=True,
 )
+
