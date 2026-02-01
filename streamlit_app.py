@@ -1,8 +1,8 @@
-# ------------------------------------------------------------
+# ====================================================
 # IMS — Integrated Management System (Arabic UI)
 # Thi Qar Oil Company — Quality & Institutional Performance Division
 # Designed & Developed by Chief Engineer Tareq Majeed Al-Karimi
-# ------------------------------------------------------------
+# ====================================================
 
 import os
 import io
@@ -151,11 +151,10 @@ def check_secrets():
     """فحص جميع الأسرار المطلوبة"""
     issues = []
 
-    # فحص وجود google_service_account أساساً لتجنب KeyError
+    # فحص وجود google_service_account
     gsa = st.secrets.get("google_service_account", None)
     if not gsa:
         issues.append("❌ القسم 'google_service_account' غير موجود في الأسرار")
-        # لا نكمل فحص مفاتيح الحساب بدون وجوده
     else:
         required_service_keys = ["type", "project_id", "private_key_id", "private_key", "client_email"]
         for key in required_service_keys:
@@ -172,7 +171,117 @@ def check_secrets():
     if missing_passwords:
         issues.append(f"❌ {len(missing_passwords)} من مفاتيح كلمات المرور مفقودة")
 
+    # فحص DRIVE_SECTION_FOLDERS
+    if "DRIVE_SECTION_FOLDERS" not in st.secrets:
+        issues.append("❌ DRIVE_SECTION_FOLDERS غير موجود")
+    else:
+        try:
+            folders_str = st.secrets.get("DRIVE_SECTION_FOLDERS", "{}")
+            folders = json.loads(folders_str)
+            for section in SECTIONS.values():
+                if section not in folders:
+                    issues.append(f"❌ المجلد للقسم '{section}' غير موجود في DRIVE_SECTION_FOLDERS")
+        except json.JSONDecodeError:
+            issues.append("❌ DRIVE_SECTION_FOLDERS ليس بصيغة JSON صحيحة")
+
     return issues
+
+def auto_fix_secrets():
+    """محاولة تصحيح مشاكل الأسرار تلقائياً"""
+    fixes = []
+    
+    # 1. تصحيح مشكلة private_key
+    if "google_service_account" in st.secrets:
+        gsa = dict(st.secrets["google_service_account"])
+        if "private_key" in gsa:
+            private_key = gsa["private_key"]
+            # إصلاح المشاكل الشائعة في private_key
+            if "-----BEGIN PRIVATE KEY-----" not in private_key:
+                fixed_key = f"-----BEGIN PRIVATE KEY-----\n{private_key}\n-----END PRIVATE KEY-----"
+                gsa["private_key"] = fixed_key
+                st.secrets["google_service_account"] = gsa
+                fixes.append("✅ تم إصلاح private_key (أضيفت العلامات المفقودة)")
+    
+    # 2. التأكد من أن جميع كلمات المرور موجودة
+    required_passwords = [f"PW_{key.upper().replace('-', '_')}" for key in SECTIONS.values()]
+    for pw_key in required_passwords:
+        if pw_key not in st.secrets:
+            # تعيين كلمة مرور افتراضية
+            st.secrets[pw_key] = "1234"
+            fixes.append(f"✅ تم إضافة {pw_key} بكلمة مرور مؤقتة")
+    
+    # 3. التأكد من وجود DRIVE_SECTION_FOLDERS كـ JSON
+    if "DRIVE_SECTION_FOLDERS" not in st.secrets:
+        # إنشاء JSON افتراضي يستخدم المجلد الجذر لجميع الأقسام
+        root_folder = st.secrets.get("DRIVE_ROOT_FOLDER_ID", "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ")
+        default_folders = {slug: root_folder for slug in SECTIONS.values()}
+        st.secrets["DRIVE_SECTION_FOLDERS"] = json.dumps(default_folders, ensure_ascii=False)
+        fixes.append("✅ تم إنشاء DRIVE_SECTION_FOLDERS افتراضياً")
+    else:
+        # التحقق من صحة JSON
+        try:
+            folders_str = st.secrets.get("DRIVE_SECTION_FOLDERS", "{}")
+            json.loads(folders_str)
+        except json.JSONDecodeError:
+            # إصلاح JSON غير صالح
+            root_folder = st.secrets.get("DRIVE_ROOT_FOLDER_ID", "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ")
+            default_folders = {slug: root_folder for slug in SECTIONS.values()}
+            st.secrets["DRIVE_SECTION_FOLDERS"] = json.dumps(default_folders, ensure_ascii=False)
+            fixes.append("✅ تم إصلاح DRIVE_SECTION_FOLDERS (كان JSON غير صالح)")
+    
+    return fixes
+
+def get_section_folders():
+    """تحميل وتفسير DRIVE_SECTION_FOLDERS بشكل صحيح"""
+    if "DRIVE_SECTION_FOLDERS" not in st.secrets:
+        return {}
+    
+    folders_str = st.secrets.get("DRIVE_SECTION_FOLDERS", "{}")
+    try:
+        # إذا كان JSON string
+        if isinstance(folders_str, str) and folders_str.strip():
+            return json.loads(folders_str)
+        # إذا كان dict مباشرة (نادر في Streamlit)
+        elif isinstance(folders_str, dict):
+            return folders_str
+        else:
+            return {}
+    except json.JSONDecodeError as e:
+        st.error(f"❌ خطأ في تحليل JSON لـ DRIVE_SECTION_FOLDERS: {str(e)}")
+        return {}
+    except Exception as e:
+        st.error(f"❌ خطأ غير متوقع في تحليل المجلدات: {str(e)}")
+        return {}
+
+def get_section_folder_id(section_slug: str) -> str:
+    """الحصول على معرف المجلد الخاص بالقسم بشكل ذكي"""
+    # 1. محاولة الحصول من DRIVE_SECTION_FOLDERS
+    folders = get_section_folders()
+    if section_slug in folders and folders[section_slug] and folders[section_slug] != "REPLACE_WITH_FOLDER_ID":
+        return folders[section_slug]
+    
+    # 2. استخدام المجلد الجذر كبديل
+    root_folder = st.secrets.get("DRIVE_ROOT_FOLDER_ID", "")
+    if root_folder and root_folder != "REPLACE_WITH_ROOT_FOLDER_ID":
+        return root_folder
+    
+    # 3. إنشاء معرف افتراضي (للأقسام المحددة مسبقاً)
+    default_folders = {
+        "policies": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "objectives": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "docs": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "audit-plan": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "audits": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "nc": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "capa": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "kb": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "reports": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "kpi": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "esign": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "notify": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+        "risks": "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ",
+    }
+    return default_folders.get(section_slug, "1q61A-vCir_Vrzo_Qucl8zD02hd9tTKQZ")
 
 def normalize_private_key(key_text: str) -> str:
     """تطبيع وتصحيح تنسيق المفتاح الخاص"""
@@ -181,12 +290,15 @@ def normalize_private_key(key_text: str) -> str:
 
     key_text = key_text.strip().strip('"').strip("'")
 
+    # استبدال \n حقيقية
     if "\\n" in key_text and "\n" not in key_text:
         key_text = key_text.replace("\\n", "\n")
 
+    # إضافة البداية والنهاية إذا لم تكن موجودة
     if "-----BEGIN PRIVATE KEY-----" not in key_text:
         key_text = f"-----BEGIN PRIVATE KEY-----\n{key_text}\n-----END PRIVATE KEY-----"
 
+    # تنظيف الأسطر
     lines = key_text.split("\n")
     cleaned_lines = []
     for line in lines:
@@ -198,7 +310,7 @@ def normalize_private_key(key_text: str) -> str:
 
 # ================= Sidebar =================
 st.sidebar.markdown("### اختر القسم")
-selected_section_ar = st.sidebar.selectbox("اختر", list(SECTIONS.keys()), key="section_select")
+selected_section_ar = st.sidebar.selectbox("اختر", list(SECTIONS.keys()), key="section_select", label_visibility="collapsed")
 section_slug = SECTIONS[selected_section_ar]
 
 st.sidebar.markdown("### صلاحيات القسم")
@@ -215,10 +327,11 @@ password_input = st.sidebar.text_input(
     "كلمة المرور (للرفع والحذف فقط)",
     type="password",
     key=f"pw_{section_slug}",
-    value=""
+    value="",
+    label_visibility="visible"
 )
 
-if st.sidebar.button("دخول", key=f"enter_{section_slug}"):
+if st.sidebar.button("دخول", key=f"enter_{section_slug}", use_container_width=True):
     if not section_password:
         st.sidebar.error(f"❌ المفتاح '{password_key}' غير موجود في الأسرار.")
     elif not password_input:
@@ -231,14 +344,31 @@ if st.sidebar.button("دخول", key=f"enter_{section_slug}"):
         st.session_state[f"auth_{section_slug}"] = False
         st.sidebar.error("❌ كلمة المرور غير صحيحة.")
 
-if st.sidebar.button("🔍 فحص الأسرار"):
-    issues = check_secrets()
-    if issues:
-        st.sidebar.error("### مشاكل في الأسرار:")
-        for issue in issues:
-            st.sidebar.write(issue)
-    else:
-        st.sidebar.success("✅ جميع الأسرار مضبوطة بشكل صحيح")
+# أزرار الخدمة
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    if st.button("🔍 فحص", key="check_secrets", use_container_width=True):
+        issues = check_secrets()
+        if issues:
+            st.sidebar.error("### مشاكل في الأسرار:")
+            for issue in issues:
+                st.sidebar.write(issue)
+        else:
+            st.sidebar.success("✅ جميع الأسرار مضبوطة")
+
+with col2:
+    if st.button("🔧 إصلاح", key="auto_fix", use_container_width=True):
+        try:
+            fixes = auto_fix_secrets()
+            if fixes:
+                st.sidebar.success("✅ تم الإصلاح:")
+                for fix in fixes:
+                    st.sidebar.write(f"• {fix}")
+                st.rerun()
+            else:
+                st.sidebar.info("⚠️ لا تحتاج للإصلاح")
+        except Exception as e:
+            st.sidebar.error(f"❌ فشل الإصلاح: {str(e)}")
 
 # ================= Google Drive Setup =================
 @st.cache_resource
@@ -251,12 +381,14 @@ def get_drive_service():
         service_account_info = dict(st.secrets["google_service_account"])
         client_email = service_account_info.get("client_email", "unknown")
 
+        # تطبيع المفتاح الخاص
         if "private_key" in service_account_info:
             service_account_info["private_key"] = normalize_private_key(service_account_info["private_key"])
 
         private_key = service_account_info.get("private_key", "")
         if not private_key or "-----BEGIN PRIVATE KEY-----" not in private_key:
-            raise ValueError("المفتاح الخاص غير صالح أو لا يحتوي على BEGIN PRIVATE KEY")
+            st.error("❌ المفتاح الخاص غير صالح - تأكد من وجود '-----BEGIN PRIVATE KEY-----'")
+            return None
 
         credentials = service_account.Credentials.from_service_account_info(
             service_account_info,
@@ -265,12 +397,19 @@ def get_drive_service():
 
         service = build("drive", "v3", credentials=credentials)
 
+        # اختبار الاتصال
         try:
-            _ = service.about().get(fields="user").execute()
-            st.sidebar.success("✅ متصل بـ Google Drive")
+            about = service.about().get(fields="user").execute()
+            st.sidebar.success(f"✅ متصل بـ Google Drive")
             return service
         except Exception as test_error:
-            st.sidebar.warning(f"⚠️ اختبار الاتصال: {str(test_error)[:100]}")
+            error_msg = str(test_error)
+            if "invalid_grant" in error_msg:
+                st.sidebar.error("❌ المفتاح الخاص منتهي الصلاحية أو غير صالح")
+            elif "access_denied" in error_msg:
+                st.sidebar.error("❌ حساب الخدمة ليس لديه صلاحية الوصول")
+            else:
+                st.sidebar.warning(f"⚠️ اختبار الاتصال: {error_msg[:80]}")
             return service
 
     except HttpError as http_err:
@@ -311,24 +450,31 @@ def get_drive_service():
         return None
 
 drive_service = get_drive_service()
+
 if not drive_service:
     st.error("❌ تعذر الاتصال بـ Google Drive. الرجاء التحقق من الأسرار وإعدادات المشروع.")
 
     with st.expander("🛠 معلومات التصحيح"):
-        st.write("### المفاتيح الموجودة في الأسرار:")
+        st.write("### الأسرار الموجودة:")
         try:
-            if "google_service_account" in st.secrets:
-                st.write("**google_service_account:**")
-                for key in st.secrets["google_service_account"].keys():
-                    value = str(st.secrets["google_service_account"].get(key, ""))
-                    if "private" in key.lower():
-                        value = f"{value[:50]}... [مخفى]"
-                    st.write(f"  - **{key}**: {value[:100]}")
-
-            for key in st.secrets.keys():
-                if key != "google_service_account":
-                    value = str(st.secrets.get(key, ""))[:100]
-                    st.write(f"**{key}**: {value}")
+            all_secrets = dict(st.secrets)
+            for key, value in all_secrets.items():
+                if key == "google_service_account":
+                    st.write("**google_service_account:**")
+                    gsa = dict(value)
+                    for subkey in ["type", "project_id", "client_email"]:
+                        if subkey in gsa:
+                            st.write(f"  - **{subkey}**: {gsa[subkey]}")
+                    if "private_key" in gsa:
+                        pk = gsa["private_key"]
+                        has_begin = "✅" if "-----BEGIN PRIVATE KEY-----" in pk else "❌"
+                        pk_preview = pk[:100] + "..." if len(pk) > 100 else pk
+                        st.write(f"  - **private_key**: {has_begin} {len(pk)} حرف - {pk_preview}")
+                else:
+                    value_str = str(value)
+                    if len(value_str) > 100:
+                        value_str = value_str[:100] + "..."
+                    st.write(f"**{key}**: {value_str}")
         except Exception as e:
             st.write(f"لا يمكن قراءة المفاتيح: {str(e)}")
 
@@ -344,7 +490,7 @@ def list_files_in_folder(folder_id: str):
         query = f"'{folder_id}' in parents and trashed = false"
         results = drive_service.files().list(
             q=query,
-            fields="files(id, name, size, mimeType, modifiedTime, webViewLink)",
+            fields="files(id, name, size, mimeType, modifiedTime, webViewLink, createdTime)",
             orderBy="modifiedTime desc",
             pageSize=100
         ).execute()
@@ -411,7 +557,11 @@ def upload_file_to_folder(folder_id: str, file_obj):
         base_name, extension = os.path.splitext(original_name)
         safe_name = f"{timestamp}_{base_name}{extension}"
 
-        file_metadata = {"name": safe_name, "parents": [folder_id]}
+        file_metadata = {
+            "name": safe_name,
+            "parents": [folder_id],
+            "description": f"تم الرفع من تطبيق IMS - قسم {selected_section_ar}"
+        }
 
         file_handle = io.BytesIO(file_obj.getvalue())
         media = MediaIoBaseUpload(
@@ -420,11 +570,13 @@ def upload_file_to_folder(folder_id: str, file_obj):
             resumable=True
         )
 
-        return drive_service.files().create(
+        result = drive_service.files().create(
             body=file_metadata,
             media_body=media,
-            fields="id, name, webViewLink"
+            fields="id, name, webViewLink, mimeType"
         ).execute()
+
+        return result
 
     except Exception as e:
         st.error(f"❌ خطأ في رفع الملف: {str(e)[:200]}")
@@ -445,29 +597,28 @@ def delete_drive_file(file_id: str):
 # ================= Main Interface =================
 st.markdown(f"## قسم: {selected_section_ar}")
 
-folder_id = st.secrets.get("DRIVE_ROOT_FOLDER_ID", "")
-if not folder_id:
-    st.error("❌ DRIVE_ROOT_FOLDER_ID غير موجود في الأسرار")
-    st.stop()
+# الحصول على معرف المجلد الخاص بالقسم
+specific_folder_id = get_section_folder_id(section_slug)
 
-# تحويل DRIVE_SECTION_FOLDERS إلى dict لضمان عمل get()
-section_folders_raw = st.secrets.get("DRIVE_SECTION_FOLDERS", {})
-try:
-    section_folders = dict(section_folders_raw)
-except Exception:
-    section_folders = {}
-
-specific_folder_id = section_folders.get(section_slug, folder_id)
+# عرض معلومات المجلد
+st.caption(f"📁 معرف المجلد: `{specific_folder_id}`")
 
 st.markdown("### الملفات الحالية 📂")
 
-if st.button("🔄 تحديث القائمة", key="refresh_files"):
+if st.button("🔄 تحديث القائمة", key="refresh_files", use_container_width=True):
     st.rerun()
 
 files = list_files_in_folder(specific_folder_id)
 
 if not files:
     st.info("📭 لا توجد ملفات في هذا القسم.")
+    st.markdown("""
+    **لرفع ملف جديد:**
+    1. أدخل كلمة المرور الصحيحة في الشريط الجانبي
+    2. اضغط على زر **"دخول"**
+    3. اختر الملف من جهازك
+    4. اضغط على **"رفع الملف إلى Google Drive"**
+    """)
 else:
     for i, file in enumerate(files, 1):
         file_id = file.get("id")
@@ -475,40 +626,53 @@ else:
         file_size = file.get("size", 0)
         mime_type = file.get("mimeType", "")
         web_link = file.get("webViewLink", "")
+        modified_time = file.get("modifiedTime", "")
 
-        col1, col2, col3 = st.columns([3, 1, 1])
+        col1, col2, col3 = st.columns([4, 1, 1])
 
         with col1:
+            # اختيار الأيقونة المناسبة
             icon = "📄"
+            file_type = "ملف"
+            
             if "google-apps" in mime_type:
                 icon = "🌐"
-                file_name_display = f"{file_name} (ملف Google)"
+                file_type = "ملف Google"
             elif "image" in mime_type:
                 icon = "🖼️"
-                file_name_display = file_name
+                file_type = "صورة"
             elif "pdf" in mime_type:
                 icon = "📕"
-                file_name_display = file_name
-            elif "document" in mime_type:
+                file_type = "PDF"
+            elif "document" in mime_type or "word" in mime_type:
                 icon = "📝"
-                file_name_display = file_name
-            elif "spreadsheet" in mime_type:
+                file_type = "مستند"
+            elif "spreadsheet" in mime_type or "excel" in mime_type:
                 icon = "📊"
-                file_name_display = file_name
-            elif "presentation" in mime_type:
+                file_type = "جدول بيانات"
+            elif "presentation" in mime_type or "powerpoint" in mime_type:
                 icon = "📽️"
-                file_name_display = file_name
-            else:
-                file_name_display = file_name
+                file_type = "عرض تقديمي"
+            elif "zip" in mime_type or "compressed" in mime_type:
+                icon = "📦"
+                file_type = "مضغوط"
 
-            st.markdown(f"{icon} **{file_name_display}**")
-            if file_size:
-                st.caption(f"الحجم: {human_size(file_size)}")
+            st.markdown(f"{icon} **{file_name}**")
+            st.caption(f"{file_type} | الحجم: {human_size(file_size)}")
+            
+            if modified_time:
+                try:
+                    # تحويل وقت Google إلى تنسيق مقروء
+                    dt = datetime.fromisoformat(modified_time.replace('Z', '+00:00'))
+                    st.caption(f"آخر تعديل: {dt.strftime('%Y-%m-%d %H:%M')}")
+                except:
+                    pass
+            
             if web_link:
                 st.caption(f"[🔗 فتح في Google Drive]({web_link})")
 
         with col2:
-            if st.button("⬇️ تنزيل", key=f"download_{file_id}_{i}"):
+            if st.button("⬇️ تنزيل", key=f"download_{file_id}_{i}", use_container_width=True):
                 with st.spinner("جاري تحضير الملف للتنزيل..."):
                     file_content, download_name = download_file_content(file_id, file_name)
                     if file_content:
@@ -517,21 +681,27 @@ else:
                             data=file_content,
                             file_name=download_name,
                             mime="application/octet-stream",
-                            key=f"save_{file_id}_{i}"
+                            key=f"save_{file_id}_{i}",
+                            use_container_width=True
                         )
                     else:
                         st.error("❌ تعذر تحضير الملف للتنزيل")
 
         with col3:
             if st.session_state.get(f"auth_{section_slug}", False):
-                if st.button("🗑️", key=f"delete_{file_id}_{i}", help="حذف الملف"):
-                    if delete_drive_file(file_id):
-                        st.success("✅ تم حذف الملف بنجاح")
-                        st.rerun()
+                if st.button("🗑️", key=f"delete_{file_id}_{i}", help="حذف الملف", use_container_width=True):
+                    # تأكيد الحذف
+                    if st.checkbox(f"تأكيد حذف '{file_name}'", key=f"confirm_{file_id}"):
+                        if delete_drive_file(file_id):
+                            st.success("✅ تم حذف الملف بنجاح")
+                            st.rerun()
+                        else:
+                            st.error("❌ فشل حذف الملف")
             else:
                 st.caption("🔒 يتطلب مصادقة")
 
-        st.divider()
+        if i < len(files):
+            st.divider()
 
 # ================= Upload Section =================
 st.markdown("---")
@@ -543,33 +713,28 @@ if st.session_state.get(f"auth_{section_slug}", False):
     uploaded_file = st.file_uploader(
         "اختر ملفًا للرفع",
         type=['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
-              'jpg', 'jpeg', 'png', 'txt', 'zip', 'csv', 'rtf'],
+              'jpg', 'jpeg', 'png', 'txt', 'zip', 'rar', 'csv', 'rtf',
+              'mp3', 'mp4', 'wav', 'avi', 'mov'],
         key=f"uploader_{section_slug}"
     )
 
     if uploaded_file is not None:
         st.write(f"**الملف المحدد:** {uploaded_file.name}")
         st.write(f"**الحجم:** {human_size(uploaded_file.size)}")
-        st.write(f"**النوع:** {uploaded_file.type}")
+        st.write(f"**النوع:** {uploaded_file.type or 'غير معروف'}")
 
-        if st.button("📤 رفع الملف إلى Google Drive", key=f"upload_btn_{section_slug}"):
-            with st.spinner("جاري رفع الملف..."):
-                result = upload_file_to_folder(specific_folder_id, uploaded_file)
-                if result:
-                    st.success(f"✅ تم رفع الملف بنجاح: {result.get('name')}")
-                    if result.get("webViewLink"):
-                        st.markdown(f"[🔗 فتح الملف في Drive]({result.get('webViewLink')})")
-                    st.rerun()
-                else:
-                    st.error("❌ فشل رفع الملف")
-else:
-    st.info("🔒 لرفع أو حذف الملفات، أدخل كلمة المرور الصحيحة في القائمة الجانبية.")
+        # إضافة وصف اختياري
+        file_description = st.text_area("وصف الملف (اختياري)", key=f"desc_{section_slug}", height=60)
 
-# ================= Footer =================
-st.markdown("---")
-st.markdown(
-    "<div class='sig'>تصميم وتطوير رئيس مهندسين أقدم طارق مجيد الكريمي ©</div>",
-    unsafe_allow_html=True,
-)
-
-
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("📤 رفع الملف إلى Google Drive", key=f"upload_btn_{section_slug}", use_container_width=True):
+                with st.spinner("جاري رفع الملف..."):
+                    result = upload_file_to_folder(specific_folder_id, uploaded_file)
+                    if result:
+                        st.success(f"✅ تم رفع الملف بنجاح: **{result.get('name')}**")
+                        if result.get("webViewLink"):
+                            st.markdown(f"[🔗 فتح الملف في Drive]({result.get('webViewLink')})")
+                        st.rerun()
+                    else:
+                        st.error("❌ فشل رفع الملف. تحقق من اتصال الإنترنت والصلا
